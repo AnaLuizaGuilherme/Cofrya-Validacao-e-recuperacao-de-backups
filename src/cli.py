@@ -108,7 +108,9 @@ def gerar_base(semente, volume, saida, dsn_origem, chave_env, versao_aplicacao):
 @click.option("--semente", default=0, show_default=True)
 @click.option("--dependencias", default="", help="Lista separada por vírgula de papéis a criar antes da restauração (cenário C5)")
 @click.option("--imagem-postgres", default=None, help="Sobrescreve a imagem Docker (use uma inválida para simular C8)")
-def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias, saida, cenario, semente, dependencias, imagem_postgres):
+@click.option("--provedor-ambiente", default="docker", type=click.Choice(["docker", "neon"]),
+              help="docker (padrão, local) ou neon (nuvem, sem Docker — requer NEON_API_KEY/NEON_PROJECT_ID)")
+def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias, saida, cenario, semente, dependencias, imagem_postgres, provedor_ambiente):
     """Executa uma única tentativa de verificação."""
     caminho_backup = os.path.join(repositorio, f"{copia_id}.dump")
     caminho_manifesto = os.path.join(repositorio, f"{copia_id}.manifest.json")
@@ -132,6 +134,7 @@ def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias,
         chave_hmac=_obter_chave(chave_env),
         diretorio_trabalho="./tentativas",
         diretorio_saida_csv=saida,
+        provedor_ambiente=provedor_ambiente,
     )
     registro = executar_tentativa(
         entrada=entrada,

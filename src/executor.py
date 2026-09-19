@@ -24,7 +24,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from . import manifest as manifesto_mod
-from .adapters import docker_adapter, file_adapter, postgres_adapter
+from .adapters import docker_adapter, neon_adapter, file_adapter, postgres_adapter
 from .results import RegistroTentativa
 from .validators import (
     validar_estrutura,
@@ -67,6 +67,18 @@ class ConfiguracaoExecucao:
     timeout_disponibilidade_s: int = 60
     limite_cpu: str = "1.0"
     limite_memoria: str = "1g"
+    provedor_ambiente: str = "docker"  # "docker" (padrão, local) ou "neon" (nuvem, sem Docker)
+
+
+def _adaptador_ambiente(contexto: "ConfiguracaoExecucao"):
+    """Seleciona o adaptador de ambiente temporário: Docker local (seção 5.5
+    do TCC) ou Neon (desvio documentado para hospedagem sem Docker, ver
+    src/adapters/neon_adapter.py). Ambos expõem a mesma interface
+    (subir_postgres_temporario / derrubar_postgres_temporario) e reaproveitam
+    a mesma exceção ContainerNaoDisponivel."""
+    if contexto.provedor_ambiente == "neon":
+        return neon_adapter
+    return docker_adapter
 
 
 class Decisao(str, Enum):
@@ -177,9 +189,10 @@ def executar_tentativa(
             return registro
 
         # --- Etapa 3: preparação do ambiente e restauração (C_sem_func, C) ---
+        adaptador = _adaptador_ambiente(contexto)
         t0 = time.monotonic()
         try:
-            instancia = docker_adapter.subir_postgres_temporario(
+            instancia = adaptador.subir_postgres_temporario(
                 id_tentativa=id_tentativa,
                 imagem=imagem_postgres_override or contexto.imagem_postgres,
                 limite_cpu=contexto.limite_cpu,
@@ -265,7 +278,7 @@ def executar_tentativa(
     finally:
         t0 = time.monotonic()
         if instancia is not None:
-            docker_adapter.derrubar_postgres_temporario(instancia.nome_container)
+            _adaptador_ambiente(contexto).derrubar_postgres_temporario(instancia.nome_container)
         try:
             file_adapter.limpar_diretorio_tentativa(diretorio_tentativa)
         except OSError as exc:

@@ -2,3 +2,4 @@
 
 #Ignore insiders AI rules
 .github\instructions\codacy.instructions.md
+.streamlit/secrets.toml
