@@ -59,6 +59,18 @@ def obter_chave(nome: str) -> bytes:
     return obter_valor(nome).encode("utf-8")
 
 
+def salvar_arquivos_enviados(pasta_destino: Path, copia_id: str, dump, manifest, referencias) -> None:
+    """Grava os arquivos enviados pelo navegador com o nome que o
+    verificador espera ({copia_id}.dump / .manifest.json / .referencias.json),
+    dentro da pasta de repositório já configurada — não precisa mexer no
+    GitHub nem numa pasta local para testar um backup pontual."""
+    pasta_destino.mkdir(parents=True, exist_ok=True)
+    (pasta_destino / f"{copia_id}.dump").write_bytes(dump.getvalue())
+    (pasta_destino / f"{copia_id}.manifest.json").write_bytes(manifest.getvalue())
+    if referencias is not None:
+        (pasta_destino / f"{copia_id}.referencias.json").write_bytes(referencias.getvalue())
+
+
 def ler_csv(caminho: Path, obrigatorias: set[str]) -> pd.DataFrame:
     if not caminho.is_file():
         return pd.DataFrame()
@@ -231,6 +243,27 @@ def main():
         with st.form("verificar_backup"):
             copia_id = st.text_input("ID da cópia", "pedidos_seed1_c0", key="copia_id")
             st.caption("Nome base dos arquivos .dump, .manifest.json e .referencias.json.")
+
+            st.subheader("Arquivos do backup")
+            modo_arquivos = st.radio(
+                "De onde vêm os arquivos?",
+                ["Enviar agora pelo navegador", "Já estão na pasta do repositório"],
+                key="modo_arquivos",
+                horizontal=True,
+            )
+            arquivo_dump = arquivo_manifest = arquivo_referencias = None
+            if modo_arquivos == "Enviar agora pelo navegador":
+                arquivo_dump = st.file_uploader("Backup (.dump)", key="upload_dump")
+                arquivo_manifest = st.file_uploader("Manifesto (.manifest.json)", key="upload_manifest")
+                arquivo_referencias = st.file_uploader(
+                    "Referências (.referencias.json) — só necessário para a configuração C",
+                    key="upload_referencias",
+                )
+                st.caption(
+                    "Os arquivos são salvos com o ID da cópia acima e ficam só nesta sessão do "
+                    "servidor — não é preciso subir nada no GitHub."
+                )
+
             col1, col2 = st.columns(2)
             configuracao = col1.selectbox("Configuração", list(DESCRICOES), index=3, key="configuracao")
             cenario = col2.selectbox("Cenário", [f"C{i}" for i in range(9)], key="cenario")
@@ -253,8 +286,22 @@ def main():
                 st.write(f"**{nome}:** {descricao}")
         if rodar:
             st.session_state.pop("ultima_tentativa", None)
-            executar_formulario(repositorio, saida, copia_id.strip(), configuracao, cenario,
-                               semente, idade, dependencias, imagem, chave_env.strip(), provedor_ambiente)
+            if modo_arquivos == "Enviar agora pelo navegador":
+                if not arquivo_dump or not arquivo_manifest:
+                    st.error("Envie pelo menos o arquivo .dump e o .manifest.json antes de executar.")
+                else:
+                    try:
+                        salvar_arquivos_enviados(
+                            repositorio, copia_id.strip(), arquivo_dump, arquivo_manifest, arquivo_referencias
+                        )
+                    except OSError as exc:
+                        st.error(f"Não foi possível salvar os arquivos enviados: {exc}")
+                    else:
+                        executar_formulario(repositorio, saida, copia_id.strip(), configuracao, cenario,
+                                           semente, idade, dependencias, imagem, chave_env.strip(), provedor_ambiente)
+            else:
+                executar_formulario(repositorio, saida, copia_id.strip(), configuracao, cenario,
+                                   semente, idade, dependencias, imagem, chave_env.strip(), provedor_ambiente)
         if "ultima_tentativa" in st.session_state:
             exibir_registro(*st.session_state["ultima_tentativa"])
     with historico:
