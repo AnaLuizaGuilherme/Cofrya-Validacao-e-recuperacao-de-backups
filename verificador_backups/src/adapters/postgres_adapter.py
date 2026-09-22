@@ -17,6 +17,17 @@ from typing import Optional
 from .docker_adapter import InstanciaTemporaria
 
 
+def _ambiente_conexao(instancia: InstanciaTemporaria) -> dict:
+    """Monta o ambiente do subprocesso, incluindo PGSSLMODE quando a
+    instância vem do adaptador Neon (que exige TLS), sem afetar o Docker
+    local (que normalmente não tem TLS configurado)."""
+    ambiente = os.environ.copy()
+    ambiente["PGPASSWORD"] = instancia.senha
+    if getattr(instancia, "imagem", "") == "neon":
+        ambiente["PGSSLMODE"] = "require"
+    return ambiente
+
+
 @dataclass
 class ResultadoRestauracao:
     codigo_saida: int
@@ -55,8 +66,7 @@ def restaurar(
     """
     import time
 
-    ambiente = os.environ.copy()
-    ambiente["PGPASSWORD"] = instancia.senha
+    ambiente = _ambiente_conexao(instancia)
 
     cmd = [
         "pg_restore",
@@ -109,8 +119,7 @@ def preparar_dependencias(
     for extensao in extensoes_necessarias:
         comandos_sql.append(f'CREATE EXTENSION IF NOT EXISTS "{extensao}";')
 
-    ambiente = os.environ.copy()
-    ambiente["PGPASSWORD"] = instancia.senha
+    ambiente = _ambiente_conexao(instancia)
 
     inicio = time.monotonic()
     stdout_total, stderr_total = "", ""
@@ -146,7 +155,7 @@ def executar_consulta(instancia: InstanciaTemporaria, consulta: str, timeout_s: 
     """
     import psycopg2
 
-    conexao = psycopg2.connect(
+    parametros_conexao = dict(
         host=instancia.host,
         port=instancia.porta,
         user=instancia.usuario,
@@ -154,6 +163,10 @@ def executar_consulta(instancia: InstanciaTemporaria, consulta: str, timeout_s: 
         dbname=instancia.banco,
         connect_timeout=timeout_s,
     )
+    if getattr(instancia, "imagem", "") == "neon":
+        parametros_conexao["sslmode"] = "require"
+
+    conexao = psycopg2.connect(**parametros_conexao)
     try:
         with conexao.cursor() as cursor:
             cursor.execute(consulta)

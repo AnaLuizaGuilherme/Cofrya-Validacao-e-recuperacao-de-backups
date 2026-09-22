@@ -1,0 +1,18 @@
+id_tentativa,teste,aprovado,valor_esperado,valor_observado,detalhe
+6c0dab40-6c51-4728-8b67-b191cdf650d3,autenticacao_manifesto,True,hmac válido,hmac válido,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,politica_idade_maxima,True,<= 30 dias,0 dias,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,identificador_autorizado,True,pedidos_seed1_c0,pedidos_seed1_c0,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,integridade_hash,True,e8d6654b44b950da8d203124ac30baef280bae7d35945366296869fe1e3f336e,confere,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,dependencias_declaradas,True,código de saída 0,0,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,restauracao_pg_restore,True,código de saída 0,0,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,tabela_presente:clientes,True,True,True,Verificação de estrutura (seção 5.4)
+6c0dab40-6c51-4728-8b67-b191cdf650d3,tabela_presente:produtos,True,True,True,Verificação de estrutura (seção 5.4)
+6c0dab40-6c51-4728-8b67-b191cdf650d3,tabela_presente:pedidos,True,True,True,Verificação de estrutura (seção 5.4)
+6c0dab40-6c51-4728-8b67-b191cdf650d3,tabela_presente:itens_pedido,True,True,True,Verificação de estrutura (seção 5.4)
+6c0dab40-6c51-4728-8b67-b191cdf650d3,tabela_presente:pagamentos,True,True,True,Verificação de estrutura (seção 5.4)
+6c0dab40-6c51-4728-8b67-b191cdf650d3,contagem:clientes,True,200,200,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,contagem:produtos,True,50,50,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,contagem:pedidos,True,1000,1000,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,contagem:itens_pedido,True,2976,2976,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,contagem:pagamentos,True,1000,1000,
+6c0dab40-6c51-4728-8b67-b191cdf650d3,totalizacao_pedidos,True,0,0,Nenhuma divergência entre total declarado e soma dos itens

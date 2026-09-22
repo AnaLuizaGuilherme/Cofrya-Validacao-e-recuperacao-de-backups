@@ -1,0 +1,10 @@
+{
+  "formato": "1.0",
+  "hmac": "2e4d5331c754a8bade3a78b8ca414b06987d980d7edf749acc054a929547e13a",
+  "id_copia": "pedidos_seed1_c0",
+  "instante_captura": "2026-09-19T16:29:07.906614+00:00",
+  "sha256": "e8d6654b44b950da8d203124ac30baef280bae7d35945366296869fe1e3f336e",
+  "tamanho_bytes": 43038,
+  "versao_aplicacao": "0.1.0",
+  "versao_banco": "PostgreSQL 18"
+}

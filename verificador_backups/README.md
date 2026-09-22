@@ -56,6 +56,59 @@ python -m src.cli matriz --repositorio ./repositorio --catalogo ./config/catalog
 Resultados: `results/resumo.csv` (uma linha por tentativa) e `results/evidencias.csv`
 (uma linha por verificação individual dentro de uma tentativa), ligados por `id_tentativa`.
 
+## App unificado com login (`cofrya_app.py`)
+
+Ponto de entrada recomendado para uso geral: reúne o verificador de backups
+PostgreSQL e o verificador de arquivos genéricos (CSV/JSON/SQLite) atrás de
+um login simples (usuário e senha, sem e-mail/Google).
+
+```bash
+streamlit run cofrya_app.py
+```
+
+Cada conta tem sua própria pasta de dados (`dados/usuarios/<usuario>/...`) —
+o que uma pessoa envia não aparece para outra. As contas ficam em
+`dados/contas.db` (SQLite local). **Atenção:** em serviços com disco
+efêmero (como o Streamlit Community Cloud), essa base pode ser perdida se
+o contêiner for reiniciado ou reimplantado — aceitável para uso pessoal ou
+demonstração pública; para contas permanentes em produção, trocar por um
+banco externo persistente.
+
+Os dois módulos por trás desse app também funcionam sozinhos, sem login:
+- `streamlit run streamlit_app.py` — só o verificador de backups PostgreSQL (seções abaixo)
+- `streamlit run arquivos_app.py` — só o verificador de arquivos genéricos
+
+## Painel Streamlit (`streamlit_app.py`)
+
+Roda por cima do `src/` — não duplica lógica. Suporta dois ambientes de
+restauração, selecionáveis no formulário:
+
+- **docker** (padrão): contêiner PostgreSQL local, conforme a seção 5.5 do TCC.
+  Requer Docker e `pg_restore` instalados na máquina que roda o Streamlit.
+- **neon**: banco PostgreSQL efêmero criado sob demanda via API do
+  [Neon](https://neon.tech) (`src/adapters/neon_adapter.py`), sem precisar de
+  Docker — necessário para hospedar o painel no Streamlit Community Cloud,
+  que não oferece Docker. Requer as variáveis `NEON_API_KEY` e
+  `NEON_PROJECT_ID` (env var ou Secrets do Streamlit) e o binário
+  `pg_restore` disponível no servidor (ver `packages.txt`, usado pelo
+  Streamlit Cloud para instalar `postgresql-client` via apt).
+
+  **Desvio documentado:** usar o Neon troca o isolamento local por
+  contêineres (seção 5.5) por um provedor de nuvem terceiro — o modelo de
+  ameaça muda e os limites de CPU/memória deixam de ser configuráveis pelo
+  verificador. Recomendado só para demonstração pública hospedada.
+
+Local:
+```bash
+export TCC_HMAC_KEY="..."          # ou copie .streamlit/secrets.toml.example
+streamlit run streamlit_app.py
+```
+
+No Streamlit Community Cloud: aponte o app para `streamlit_app.py` neste
+repositório, cole os Secrets a partir de `.streamlit/secrets.toml.example`
+em Settings > Secrets, e selecione "neon" como ambiente de restauração no
+formulário (Docker não está disponível nesse serviço).
+
 ## Modelo de ameaça (seção 4.4)
 
 A chave HMAC e o catálogo autorizado (`config/catalog.json`) devem ficar fora do
