@@ -14,6 +14,8 @@ from src.results import RegistroTentativa, RegistradorCSV, CAMPOS_RESUMO
 from src.tipos_arquivo import verificar_arquivo_generico, verificar_json
 from src.adapters import neon_adapter
 
+REFERENCIAS_TESTE = {'n_clientes': 1, 'n_produtos': 1, 'n_pedidos': 1, 'n_itens': 1, 'n_pagamentos': 1}
+
 
 @pytest.mark.parametrize('id_copia', ['../fora', '../../bob/copia', '/tmp/copia', r'..\fora'])
 def test_upload_nao_escreve_com_id_invalido(tmp_path, id_copia):
@@ -123,7 +125,7 @@ def test_ambiente_indisponivel_e_inconclusivo(laboratorio,monkeypatch):
     entrada,contexto=laboratorio
     def falhar(**kwargs): raise executor.docker_adapter.ContainerNaoDisponivel('indisponivel')
     monkeypatch.setattr(executor.docker_adapter,'subir_postgres_temporario',falhar)
-    r=executor.executar_tentativa(entrada,executor.Configuracao.C,executor.PoliticaTemporal(),contexto)
+    r=executor.executar_tentativa(entrada,executor.Configuracao.C,executor.PoliticaTemporal(),contexto,referencias_esperadas=REFERENCIAS_TESTE)
     assert r.decisao=='inconclusiva'
 
 
@@ -177,7 +179,7 @@ def test_imports_do_diretorio_compatibilidade():
     raiz=Path(__file__).resolve().parents[1]
     proc=subprocess.run([sys.executable,'-c','import src.executor, src.results, src.auth; print(src.executor.VERSAO_CODIGO)'],cwd=raiz/'verificador_backups',capture_output=True,text=True)
     assert proc.returncode==0,proc.stderr
-    assert proc.stdout.strip()=='0.2.1'
+    assert proc.stdout.strip()=='0.2.2'
 
 
 @pytest.mark.parametrize('configuracao', [executor.Configuracao.C_SEM_FUNC, executor.Configuracao.C])
@@ -200,7 +202,7 @@ def test_falha_restauracao_distingue_conexao_de_backup(laboratorio,monkeypatch,c
     def validar_indevidamente(*args):
         pytest.fail('Não deve executar validação funcional após falha de restauração')
     monkeypatch.setattr(executor,'validar_estrutura',validar_indevidamente)
-    r=executor.executar_tentativa(entrada,configuracao,executor.PoliticaTemporal(),contexto)
+    r=executor.executar_tentativa(entrada,configuracao,executor.PoliticaTemporal(),contexto,referencias_esperadas=REFERENCIAS_TESTE)
     assert r.decisao==decisao
     assert len(restauracoes)==1 and remocoes==['test']
     assert any(e['teste']=='restauracao_pg_restore' and e['detalhe']==erro for e in r.evidencias)
@@ -214,3 +216,33 @@ def test_conexao_indisponivel_ao_preparar_dependencias_e_inconclusiva(laboratori
     monkeypatch.setattr(executor.postgres_adapter,'restaurar',lambda *args:pytest.fail('Não deve restaurar sem conexão'))
     r=executor.executar_tentativa(entrada,executor.Configuracao.C_SEM_FUNC,executor.PoliticaTemporal(),contexto)
     assert r.decisao=='inconclusiva' and 'conexão' in r.motivo
+
+
+@pytest.mark.parametrize('referencias', [None, {}, [], {**REFERENCIAS_TESTE, 'n_pedidos': True}])
+def test_c_referencias_invalidas_nao_criam_ambiente(laboratorio,monkeypatch,referencias):
+    entrada,contexto=laboratorio
+    monkeypatch.setattr(executor.docker_adapter,'subir_postgres_temporario',lambda **k:pytest.fail('Não deve criar banco sem referências válidas'))
+    r=executor.executar_tentativa(entrada,executor.Configuracao.C,executor.PoliticaTemporal(),contexto,referencias_esperadas=referencias)
+    assert r.decisao=='inconclusiva'
+    assert r.duracao_restauracao_s is None
+    assert any(e['teste']=='referencias_funcionais' and not e['aprovado'] for e in r.evidencias)
+
+
+def test_id_divergente_continua_reprovado_com_motivo_especifico(laboratorio):
+    entrada,contexto=laboratorio
+    entrada.id_copia='copia_catalogada'
+    r=executor.executar_tentativa(entrada,executor.Configuracao.B,executor.PoliticaTemporal(),contexto,semente=1)
+    assert r.decisao=='reprovada'
+    assert 'copia_catalogada' in r.motivo and 'pedidos_seed1_c0' in r.motivo
+    assert 'C6' not in r.motivo
+    assert r.duracao_hash_s is None
+
+
+def test_idade_excedida_permanece_reprovada(laboratorio):
+    from datetime import datetime, timedelta, timezone
+    entrada,contexto=laboratorio
+    m=manifest.construir_manifesto(entrada.caminho_backup,entrada.id_copia,'18','test',
+        instante_captura=(datetime.now(timezone.utc)-timedelta(days=31)).isoformat())
+    manifest.salvar_manifesto(manifest.assinar_manifesto(m,b'key'),entrada.caminho_manifesto)
+    r=executor.executar_tentativa(entrada,executor.Configuracao.B,executor.PoliticaTemporal(),contexto)
+    assert r.decisao=='reprovada' and 'Idade do backup' in r.motivo and 'C6' in r.motivo

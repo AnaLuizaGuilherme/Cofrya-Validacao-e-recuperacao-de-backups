@@ -4,8 +4,8 @@ Executor sequencial (seções 4.5, 4.6, 5.1, 5.3 e 5.7 do TCC).
 Aplica, para uma tentativa (uma combinação cópia + configuração), as etapas
 habilitadas pela configuração selecionada:
 
-    A          : identidade + política temporal + sucesso informado pelo produtor
-    B          : A + autenticação do manifesto (HMAC) + conferência de hash
+    A          : existência dos arquivos
+    B          : A + autenticação (HMAC) + identificador/idade + tamanho/hash
     C_sem_func : B + preparação do ambiente + restauração (pg_restore --exit-on-error)
     C          : C_sem_func + validação de estrutura, conteúdo e regras de negócio
 
@@ -31,13 +31,14 @@ from typing import Any, Dict, List, Optional
 from . import manifest as manifesto_mod
 from .adapters import docker_adapter, neon_adapter, file_adapter, postgres_adapter
 from .results import RegistroTentativa
+from .experiment_inputs import validar_referencias
 from .validators import (
     validar_estrutura,
     validar_conteudo,
     validar_regras_de_negocio,
 )
 
-VERSAO_CODIGO = "0.2.1"
+VERSAO_CODIGO = "0.2.2"
 
 
 class Configuracao(str, Enum):
@@ -190,7 +191,14 @@ def executar_tentativa(
         )
         if not (dentro_da_politica and id_confere):
             registro.decisao = Decisao.REPROVADA.value
-            registro.motivo = "Violação de política de idade máxima ou identificador (C6)"
+            motivos = []
+            if not id_confere:
+                motivos.append(f"ID da cópia divergente: informado '{entrada.id_copia}', manifesto '{manifesto.id_copia}'")
+            if idade < timedelta(0):
+                motivos.append("Data de captura do manifesto está no futuro")
+            elif not dentro_da_politica:
+                motivos.append(f"Idade do backup excede o limite de {politica.idade_maxima_dias} dias (C6)")
+            registro.motivo = '; '.join(motivos)
             return registro
 
         t0 = time.monotonic()
@@ -210,6 +218,15 @@ def executar_tentativa(
             registro.decisao = Decisao.APROVADA.value
             registro.motivo = "Configuração B: autenticação e integridade aprovadas"
             return registro
+
+        if configuracao == Configuracao.C:
+            try:
+                validar_referencias(referencias_esperadas)
+            except ValueError as exc:
+                registro.decisao = Decisao.INCONCLUSIVA.value
+                registro.motivo = str(exc)
+                registro.registrar_evidencia('referencias_funcionais', False, 'referências válidas', str(exc))
+                return registro
 
         # --- Etapa 3: preparação do ambiente e restauração (C_sem_func, C) ---
         adaptador = _adaptador_ambiente(contexto)
@@ -274,11 +291,6 @@ def executar_tentativa(
             return registro
 
         # --- Etapa 4: validação de estrutura, conteúdo e negócio (C) ---
-        if referencias_esperadas is None:
-            registro.decisao = Decisao.INCONCLUSIVA.value
-            registro.motivo = "Referências esperadas não fornecidas para validação funcional"
-            return registro
-
         t0 = time.monotonic()
         resultado_estrutura = validar_estrutura(instancia)
         resultado_conteudo = validar_conteudo(instancia, referencias_esperadas)

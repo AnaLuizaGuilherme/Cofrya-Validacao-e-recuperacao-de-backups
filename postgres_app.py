@@ -5,7 +5,6 @@ Caminhos relativos são resolvidos a partir da pasta deste arquivo.
 """
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import re
@@ -14,6 +13,7 @@ import subprocess
 import threading
 import tempfile
 from src.safe_files import validar_id, salvar_uploads
+from src.experiment_inputs import id_do_backup_enviado, validar_rotulo_da_copia, ler_referencias
 
 import pandas as pd
 import streamlit as st
@@ -85,7 +85,8 @@ def ler_csv(caminho: Path, obrigatorias: set[str]) -> pd.DataFrame:
 def exibir_registro(registro, salvo: bool):
     apresentar = {"aprovada": st.success, "reprovada": st.error}.get(registro.decisao, st.warning)
     apresentar(f"{registro.decisao.capitalize()} — {registro.motivo}")
-    st.caption(f"Tentativa: {registro.id_tentativa} · Configuração: {registro.configuracao}")
+    st.caption(f"Tentativa: {registro.id_tentativa} · Configuração: {registro.configuracao} · "
+               f"Cópia: {registro.id_copia} · Cenário: {registro.cenario} · Semente: {registro.semente}")
     if not salvo:
         st.warning("A tentativa foi executada, mas não foi salva no histórico CSV.")
     if registro.evidencias:
@@ -93,9 +94,20 @@ def exibir_registro(registro, salvo: bool):
 
 
 def executar_formulario(repositorio, saida, copia_id, configuracao, cenario,
-                       semente, idade, dependencias_texto, imagem, chave_env, provedor_ambiente, uploads=None):
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", copia_id):
-        st.error("Informe um ID de cópia sem pastas, usando letras, números, ponto, hífen ou sublinhado.")
+                       semente, idade, dependencias_texto, imagem, chave_env, provedor_ambiente,
+                       uploads=None, usar_nome_backup=False):
+    try:
+        if usar_nome_backup:
+            if uploads is None or uploads[0] is None:
+                raise ValueError('Envie o backup .dump para identificar a cópia.')
+            copia_id = id_do_backup_enviado(uploads[0].name)
+        validar_id(copia_id)
+        validar_rotulo_da_copia(copia_id, cenario, int(semente))
+        referencias = None
+        if configuracao == 'C' and uploads is not None:
+            referencias = ler_referencias(uploads[2].getvalue() if uploads[2] is not None else b'')
+    except ValueError as exc:
+        st.error(str(exc))
         return
     chave_env = "TCC_HMAC_KEY"
     chave = obter_chave(chave_env)
@@ -140,14 +152,13 @@ def executar_formulario(repositorio, saida, copia_id, configuracao, cenario,
         st.warning("Uma verificação já está em andamento. Aguarde a conclusão e tente novamente.")
         return
     try:
+        if configuracao == 'C' and uploads is None:
+            referencia = repositorio / f"{copia_id}.referencias.json"
+            if not referencia.is_file():
+                raise ValueError(f'A configuração C exige {referencia.name} na pasta da cópia.')
+            referencias = ler_referencias(referencia.read_bytes())
         if uploads is not None:
             salvar_arquivos_enviados(repositorio, copia_id, *uploads)
-        referencia = repositorio / f"{copia_id}.referencias.json"
-        referencias = None
-        if configuracao == "C" and referencia.is_file():
-            referencias = json.loads(referencia.read_text(encoding="utf-8"))
-            if not isinstance(referencias, dict):
-                raise ValueError("O arquivo de referências precisa conter um objeto JSON.")
         entrada = EntradaCatalogo(
             id_copia=copia_id,
             caminho_backup=str(repositorio / f"{copia_id}.dump"),
@@ -232,23 +243,33 @@ def renderizar_pagina(repositorio: Path, saida: Path) -> None:
         )
     verificacao, historico = st.tabs(["Nova verificação", "Resultados"])
     with verificacao:
+        modo_arquivos = st.radio(
+            "De onde vêm os arquivos?",
+            ["Enviar agora pelo navegador", "Já estão na pasta do repositório"],
+            key="modo_arquivos", horizontal=True,
+        )
+        usar_nome_backup = False
+        if modo_arquivos == "Enviar agora pelo navegador":
+            usar_nome_backup = st.checkbox(
+                "Usar o nome do backup como ID da cópia", value=True, key="usar_nome_backup",
+                help="pedidos_seed1_c3.dump será identificado como pedidos_seed1_c3. "
+                     "Desmarque para informar um ID manualmente.",
+            )
         with st.form("verificar_backup"):
-            copia_id = st.text_input("ID da cópia", "pedidos_seed1_c0", key="copia_id")
-            st.caption("Nome base dos arquivos .dump, .manifest.json e .referencias.json.")
+            copia_id = ''
+            if usar_nome_backup:
+                st.caption("O ID da cópia será obtido do nome do arquivo .dump enviado.")
+            else:
+                copia_id = st.text_input("ID da cópia", "pedidos_seed1_c0", key="copia_id")
+                st.caption("Use o ID correspondente aos arquivos: por exemplo, pedidos_seed1_c3 para C3.")
 
             st.subheader("Arquivos do backup")
-            modo_arquivos = st.radio(
-                "De onde vêm os arquivos?",
-                ["Enviar agora pelo navegador", "Já estão na pasta do repositório"],
-                key="modo_arquivos",
-                horizontal=True,
-            )
             arquivo_dump = arquivo_manifest = arquivo_referencias = None
             if modo_arquivos == "Enviar agora pelo navegador":
                 arquivo_dump = st.file_uploader("Backup (.dump)", key="upload_dump")
                 arquivo_manifest = st.file_uploader("Manifesto (.manifest.json)", key="upload_manifest")
                 arquivo_referencias = st.file_uploader(
-                    "Referências (.referencias.json) — só necessário para a configuração C",
+                    "Referências (.referencias.json) — obrigatório na configuração C",
                     key="upload_referencias",
                 )
                 st.caption(
@@ -288,6 +309,7 @@ def renderizar_pagina(repositorio: Path, saida: Path) -> None:
                         repositorio, saida, copia_id.strip(), configuracao, cenario,
                         semente, idade, dependencias, imagem, chave_env, provedor_ambiente,
                         uploads=(arquivo_dump, arquivo_manifest, arquivo_referencias),
+                        usar_nome_backup=usar_nome_backup,
                     )
             else:
                 executar_formulario(repositorio, saida, copia_id.strip(), configuracao, cenario,

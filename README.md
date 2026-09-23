@@ -70,6 +70,20 @@ Os resultados antigos em `results/` são preservados como evidência histórica.
 
 Selecionar C0–C8 apenas rotula uma tentativa. As falhas devem ser preparadas separadamente. A interface não injeta falhas ao selecionar um cenário. C8 por imagem inexistente aplica-se somente a Docker; para Neon, uma indisponibilidade precisa ser controlada no próprio provedor.
 
+No upload, a opção **Usar o nome do backup como ID da cópia** vem marcada. Assim, `pedidos_seed1_c3.dump` usa o ID `pedidos_seed1_c3`, mesmo depois de um teste C0. O nome só identifica a cópia solicitada: o manifesto continua sendo autenticado e seu ID precisa coincidir. Para informar um ID manualmente, desmarque a opção. Arquivos já presentes no servidor usam o campo de ID manual.
+
+Para a convenção `pedidos_seedN_cX`, a tela exige cenário e semente compatíveis com o nome antes de iniciar a tentativa. Isso evita registrar arquivos de C0 sob o rótulo C3. A configuração C também exige referências JSON válidas antes da restauração. A ausência delas não cria um banco temporário. O resultado mostra o ID, cenário e semente efetivamente utilizados.
+
+| Cenário | ID dos arquivos com semente 1 | A | B | C | C_sem_func |
+| --- | --- | --- | --- | --- | --- |
+| C0 — backup válido | `pedidos_seed1_c0` | aprovada | aprovada | aprovada | aprovada |
+| C1 — arquivo truncado após assinatura | `pedidos_seed1_c1` | aprovada | reprovada | reprovada | reprovada |
+| C2 — byte alterado após assinatura | `pedidos_seed1_c2` | aprovada | reprovada | reprovada | reprovada |
+| C3 — tabela omitida antes da assinatura | `pedidos_seed1_c3` | aprovada | aprovada | reprovada | aprovada |
+| C4 — total incorreto antes da assinatura | `pedidos_seed1_c4` | aprovada | aprovada | reprovada | aprovada |
+
+Esta é a matriz **esperada**, condicionada aos arquivos corretos e ao ambiente disponível. C1/C2 devem falhar na integridade; C3/C4 na configuração C devem alcançar a validação funcional. Uma reprovação por ID divergente não demonstra a detecção dessas falhas. Confira decisão **e motivo** em `resumo.csv` e a etapa em `evidencias.csv`. Use sempre dump, manifesto e referências da mesma pasta de cenário. Resultados antigos são preservados; erros de entrada exigem novas tentativas.
+
 A chave HMAC e as referências esperadas pertencem ao domínio confiável. As referências devem ser capturadas **antes** da injeção de falhas e preservadas pelo pesquisador. O hash das referências registrado no CSV permite identificar a entrada utilizada, mas **não autentica a origem das referências**. O upload é destinado ao laboratório controlado: receber referências de um adversário não estabelece uma referência confiável. Uma aprovação C também não certifica todas as regras de uma aplicação arbitrária; os validadores atuais usam o esquema sintético de pedidos.
 
 Arquivos genéricos têm escopo separado: sem manifesto, verifica-se leitura/estrutura, sem atestar integridade em relação ao original. `pg_restore --list` avalia o índice, não restaura os dados. A ferramenta distingue resultado reprovado de inconclusivo quando um requisito não está disponível.
@@ -90,7 +104,7 @@ O executor local requer Docker, `pg_restore`, `psql` quando há dependências de
 
 ## Resultados e métricas
 
-`resumo.csv` e `evidencias.csv` são ligados por `id_tentativa`. Novos registros incluem versão `0.2.1`, instante UTC, provedor e hash das referências. Preparação inclui inicialização do ambiente e dependências. O tempo total inclui limpeza. CPU, memória e espaço permanecem `NA` enquanto não houver instrumentação; não são zeros nem medições.
+`resumo.csv` e `evidencias.csv` são ligados por `id_tentativa`. Novos registros incluem versão `0.2.2`, instante UTC, provedor e hash das referências. Preparação inclui inicialização do ambiente e dependências. O tempo total inclui limpeza. CPU, memória e espaço permanecem `NA` enquanto não houver instrumentação; não são zeros nem medições.
 
 Registros anteriores à correção não devem fundamentar a decomposição de tempos: a inicialização não era somada à preparação. O exemplo legado também possui semente declarada `0` e ID `seed1`; reconcilie com os arquivos de origem ou repita o ensaio. O programa **não altera essa evidência retroativamente**. Ao acrescentar registros a CSVs legados compatíveis, apenas estende o cabeçalho; metadados antigos desconhecidos ficam `NA`. Escrita CSV é sequencial por processo; use uma instância por pasta de resultados.
 
