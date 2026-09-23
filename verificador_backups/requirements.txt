@@ -1,5 +1,1 @@
-psycopg2-binary>=2.9
-click>=8.1
-streamlit>=1.38
-pandas>=2.0
-requests>=2.31
+-r ../requirements.txt

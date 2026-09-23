@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import csv
 import os
+import threading
+import tempfile
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -20,7 +23,7 @@ CAMPOS_RESUMO = [
     "duracao_preparacao_s", "duracao_restauracao_s", "duracao_validacao_s",
     "duracao_limpeza_s", "tempo_decisao_s",
     "cpu_pct", "memoria_max_mb", "espaco_temp_mb",
-    "eh_repeticao_desempenho",
+    "eh_repeticao_desempenho", "instante_inicio_utc", "provedor_ambiente", "sha256_referencias",
 ]
 
 CAMPOS_EVIDENCIA = ["id_tentativa", "teste", "aprovado", "valor_esperado", "valor_observado", "detalhe"]
@@ -48,6 +51,9 @@ class RegistroTentativa:
     memoria_max_mb: Optional[float] = None
     espaco_temp_mb: Optional[float] = None
     eh_repeticao_desempenho: bool = False
+    instante_inicio_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    provedor_ambiente: str = ""
+    sha256_referencias: str = ""
     evidencias: List[Dict[str, Any]] = field(default_factory=list)
 
     def registrar_evidencia(self, teste: str, aprovado: bool, esperado: Any, observado: Any, detalhe: str = "") -> None:
@@ -61,34 +67,59 @@ class RegistroTentativa:
         })
 
 
-class RegistradorCSV:
-    def __init__(self, diretorio_saida: str):
-        self.diretorio_saida = diretorio_saida
-        os.makedirs(diretorio_saida, exist_ok=True)
-        self.caminho_resumo = os.path.join(diretorio_saida, "resumo.csv")
-        self.caminho_evidencias = os.path.join(diretorio_saida, "evidencias.csv")
-        self._garantir_cabecalhos()
+_TRAVA_CSV = threading.RLock()
 
-    def _garantir_cabecalhos(self) -> None:
-        if not os.path.isfile(self.caminho_resumo):
-            with open(self.caminho_resumo, "w", newline="", encoding="utf-8") as f:
-                csv.DictWriter(f, fieldnames=CAMPOS_RESUMO).writeheader()
-        if not os.path.isfile(self.caminho_evidencias):
-            with open(self.caminho_evidencias, "w", newline="", encoding="utf-8") as f:
-                csv.DictWriter(f, fieldnames=CAMPOS_EVIDENCIA).writeheader()
+
+class RegistradorCSV:
+    def __init__(self, diretorio_saida):
+        self.diretorio_saida = os.fspath(diretorio_saida)
+        os.makedirs(self.diretorio_saida, exist_ok=True)
+        self.caminho_resumo = os.path.join(self.diretorio_saida, "resumo.csv")
+        self.caminho_evidencias = os.path.join(self.diretorio_saida, "evidencias.csv")
+
+    def _ler_existente(self, caminho, campos):
+        if not os.path.exists(caminho) or os.path.getsize(caminho) == 0:
+            return None
+        with open(caminho, newline="", encoding="utf-8-sig") as f:
+            leitor = csv.DictReader(f)
+            header = leitor.fieldnames or []
+            if len(header) != len(set(header)) or "id_tentativa" not in header or not set(header) <= set(campos):
+                raise ValueError("Cabeçalho CSV incompatível; preserve o arquivo e escolha outra pasta.")
+            if header == campos:
+                return False
+            linhas = list(leitor)
+            if any(None in linha for linha in linhas):
+                raise ValueError("CSV com linhas incompatíveis; nenhuma alteração realizada.")
+            return linhas
+
+    def _preparar(self, caminho, campos, linhas):
+        if linhas is False:
+            return
+        temporario = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", newline="", encoding="utf-8", dir=self.diretorio_saida, delete=False) as f:
+                temporario = f.name
+                escritor = csv.DictWriter(f, fieldnames=campos)
+                escritor.writeheader()
+                for linha in linhas or []:
+                    escritor.writerow({campo: linha.get(campo, "NA") for campo in campos})
+            os.replace(temporario, caminho)
+        finally:
+            if temporario and os.path.exists(temporario):
+                os.unlink(temporario)
 
     def gravar(self, registro: RegistroTentativa) -> None:
-        linha_resumo = {campo: getattr(registro, campo, None) for campo in CAMPOS_RESUMO}
-        # Dados ausentes são sinalizados, não substituídos por zero (seção 4.7).
-        for chave, valor in linha_resumo.items():
-            if valor is None:
-                linha_resumo[chave] = "NA"
-
-        with open(self.caminho_resumo, "a", newline="", encoding="utf-8") as f:
-            csv.DictWriter(f, fieldnames=CAMPOS_RESUMO).writerow(linha_resumo)
-
-        if registro.evidencias:
-            with open(self.caminho_evidencias, "a", newline="", encoding="utf-8") as f:
-                escritor = csv.DictWriter(f, fieldnames=CAMPOS_EVIDENCIA)
-                for ev in registro.evidencias:
-                    escritor.writerow(ev)
+        with _TRAVA_CSV:
+            # Validar ambos antes de migrar cabeçalhos; não inventar metadados antigos.
+            resumo = self._ler_existente(self.caminho_resumo, CAMPOS_RESUMO)
+            evidencias = self._ler_existente(self.caminho_evidencias, CAMPOS_EVIDENCIA)
+            self._preparar(self.caminho_resumo, CAMPOS_RESUMO, resumo)
+            self._preparar(self.caminho_evidencias, CAMPOS_EVIDENCIA, evidencias)
+            if registro.evidencias:
+                with open(self.caminho_evidencias, "a", newline="", encoding="utf-8") as f:
+                    csv.DictWriter(f, fieldnames=CAMPOS_EVIDENCIA).writerows(registro.evidencias)
+            linha = {campo: getattr(registro, campo, None) for campo in CAMPOS_RESUMO}
+            with open(self.caminho_resumo, "a", newline="", encoding="utf-8") as f:
+                csv.DictWriter(f, fieldnames=CAMPOS_RESUMO).writerow(
+                    {campo: "NA" if valor is None else valor for campo, valor in linha.items()}
+                )

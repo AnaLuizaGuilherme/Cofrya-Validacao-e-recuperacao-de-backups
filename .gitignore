@@ -3,3 +3,14 @@
 #Ignore insiders AI rules
 .github\instructions\codacy.instructions.md
 .streamlit/secrets.toml
+
+
+# Dados privados e arquivos gerados em execução
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+dados/
+tentativas/
+.env
+*.log

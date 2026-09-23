@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import requests
 
@@ -80,43 +80,50 @@ def subir_postgres_temporario(
 
     nome_branch = f"tentativa-{id_tentativa}"[:63]
 
-    resposta = requests.post(
-        f"{BASE_URL}/projects/{project_id}/branches",
-        headers=cabecalhos,
-        json={"branch": {"name": nome_branch}, "endpoints": [{"type": "read_write"}]},
-        timeout=30,
-    )
-    if resposta.status_code >= 300:
-        raise ContainerNaoDisponivel(f"Falha ao criar branch Neon: {resposta.text}")
-
-    dados = resposta.json()
-    branch_id = dados["branch"]["id"]
-
-    endpoint_pronto = _aguardar_endpoint(project_id, branch_id, cabecalhos, timeout_disponibilidade_s)
-    if not endpoint_pronto:
-        _remover_branch(project_id, branch_id, cabecalhos)
-        raise ContainerNaoDisponivel(
-            f"Branch Neon não ficou pronto em {timeout_disponibilidade_s}s "
-            f"(cenário compatível com C8)."
+    branch_id = None
+    try:
+        resposta = requests.post(
+            f"{BASE_URL}/projects/{project_id}/branches", headers=cabecalhos,
+            json={"branch": {"name": nome_branch}, "endpoints": [{"type": "read_write"}]},
+            timeout=30,
         )
-
-    uri = _obter_connection_uri(project_id, branch_id, cabecalhos)
-    p = urlparse(uri)
-
-    return InstanciaTemporaria(
-        nome_container=branch_id,  # reaproveita o campo para guardar o id do branch Neon
-        host=p.hostname,
-        porta=p.port or 5432,
-        usuario=p.username,
-        senha=p.password,
-        banco=(p.path.lstrip("/").split("?")[0] or "neondb"),
-        imagem="neon",  # sinaliza para o postgres_adapter usar sslmode=require
-    )
+        if resposta.status_code >= 300:
+            raise ContainerNaoDisponivel(f"Falha ao criar branch Neon (HTTP {resposta.status_code}).")
+        branch_id = resposta.json()["branch"]["id"]
+        if not _aguardar_endpoint(project_id, branch_id, cabecalhos, timeout_disponibilidade_s):
+            raise ContainerNaoDisponivel("O ambiente Neon não ficou pronto dentro do prazo.")
+        # O branch herda o banco pai. Restaurar em um banco novo impede que
+        # tabelas herdadas sejam confundidas com dados recuperados do backup.
+        banco = "cofrya_" + __import__("uuid").uuid4().hex
+        resposta_db = requests.post(
+            f"{BASE_URL}/projects/{project_id}/branches/{branch_id}/databases",
+            headers=cabecalhos,
+            json={"database": {"name": banco, "owner_name": "neondb_owner"}}, timeout=30,
+        )
+        if resposta_db.status_code >= 300:
+            raise ContainerNaoDisponivel(f"Falha ao criar banco temporário (HTTP {resposta_db.status_code}).")
+        uri = _obter_connection_uri(project_id, branch_id, cabecalhos, banco)
+        p = urlparse(uri)
+        if not p.hostname or not p.username or not p.password:
+            raise ValueError("URI de conexão incompleta")
+        return InstanciaTemporaria(
+            nome_container=branch_id, host=p.hostname, porta=p.port or 5432,
+            usuario=unquote(p.username), senha=unquote(p.password), banco=banco, imagem="neon",
+        )
+    except (requests.RequestException, ValueError, KeyError, ContainerNaoDisponivel) as exc:
+        limpeza = ""
+        if branch_id:
+            try:
+                _remover_branch(project_id, branch_id, cabecalhos)
+            except RuntimeError:
+                limpeza = f" Remoção pendente do branch {branch_id}; confira o console Neon."
+        detalhe = str(exc) if isinstance(exc, ContainerNaoDisponivel) else type(exc).__name__
+        raise ContainerNaoDisponivel(f"Preparação Neon interrompida: {detalhe}.{limpeza}") from exc
 
 
 def _aguardar_endpoint(project_id: str, branch_id: str, cabecalhos: dict, timeout_s: int) -> bool:
-    prazo = time.time() + timeout_s
-    while time.time() < prazo:
+    prazo = time.monotonic() + timeout_s
+    while time.monotonic() < prazo:
         r = requests.get(
             f"{BASE_URL}/projects/{project_id}/branches/{branch_id}/endpoints",
             headers=cabecalhos, timeout=15,
@@ -129,15 +136,15 @@ def _aguardar_endpoint(project_id: str, branch_id: str, cabecalhos: dict, timeou
     return False
 
 
-def _obter_connection_uri(project_id: str, branch_id: str, cabecalhos: dict) -> str:
+def _obter_connection_uri(project_id: str, branch_id: str, cabecalhos: dict, banco: str = "neondb") -> str:
     r = requests.get(
         f"{BASE_URL}/projects/{project_id}/connection_uri",
         headers=cabecalhos,
-        params={"branch_id": branch_id, "database_name": "neondb", "role_name": "neondb_owner"},
+        params={"branch_id": branch_id, "database_name": banco, "role_name": "neondb_owner"},
         timeout=15,
     )
     if r.status_code >= 300:
-        raise ContainerNaoDisponivel(f"Falha ao obter connection_uri do Neon: {r.text}")
+        raise ContainerNaoDisponivel(f"Falha ao obter conexão Neon (HTTP {r.status_code}).")
     return r.json()["uri"]
 
 
@@ -145,18 +152,17 @@ def derrubar_postgres_temporario(branch_id: str) -> None:
     """Remove o branch da tentativa. Mesma semântica de derrubar_postgres_temporario
     do docker_adapter: falha de limpeza é possível e não deve travar o restante
     do fluxo (seção 5.3 do TCC)."""
-    try:
-        chave, project_id = _obter_config()
-    except ContainerNaoDisponivel:
-        return
+    chave, project_id = _obter_config()
     _remover_branch(project_id, branch_id, _cabecalhos(chave))
 
 
 def _remover_branch(project_id: str, branch_id: str, cabecalhos: dict) -> None:
     try:
-        requests.delete(
+        resposta = requests.delete(
             f"{BASE_URL}/projects/{project_id}/branches/{branch_id}",
             headers=cabecalhos, timeout=30,
         )
-    except requests.RequestException:
-        pass  # falha de limpeza registrada pelo chamador, não interrompe o fluxo
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Limpeza Neon pendente: {branch_id}") from exc
+    if resposta.status_code >= 300 and resposta.status_code != 404:
+        raise RuntimeError(f"Limpeza Neon pendente: {branch_id} (HTTP {resposta.status_code})")

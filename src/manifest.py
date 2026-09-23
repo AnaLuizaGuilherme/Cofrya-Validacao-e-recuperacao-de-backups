@@ -98,10 +98,19 @@ def assinar_manifesto(manifesto: Manifesto, chave: bytes) -> Dict[str, Any]:
 def carregar_documento_manifesto(caminho_json: str) -> Dict[str, Any]:
     with open(caminho_json, "r", encoding="utf-8") as f:
         try:
-            documento = json.load(f)
+            def sem_duplicatas(pares):
+                objeto = {}
+                for chave, valor in pares:
+                    if chave in objeto:
+                        raise ManifestoInvalido("Manifesto com campos duplicados.")
+                    objeto[chave] = valor
+                return objeto
+            documento = json.load(f, object_pairs_hook=sem_duplicatas)
         except json.JSONDecodeError as exc:
             raise ManifestoInvalido(f"JSON inválido em {caminho_json}: {exc}") from exc
 
+    if not isinstance(documento, dict):
+        raise ManifestoInvalido("O manifesto deve ser um objeto JSON.")
     campos_obrigatorios = {
         "formato", "id_copia", "instante_captura", "tamanho_bytes",
         "sha256", "versao_banco", "versao_aplicacao", "hmac",
@@ -110,10 +119,7 @@ def carregar_documento_manifesto(caminho_json: str) -> Dict[str, Any]:
     if faltantes:
         raise ManifestoInvalido(f"Campos ausentes no manifesto: {sorted(faltantes)}")
 
-    # Rejeita campos duplicados: json.load já colapsa duplicatas silenciosamente
-    # em um dict; a defesa real está em validar contra um schema estrito de chaves
-    # conhecidas, o que já é feito acima (qualquer chave extra é ignorada, nunca
-    # aceita como se fosse dado íntegro).
+    # Duplicatas são rejeitadas no parser; campos desconhecidos também são recusados.
     extras = set(documento.keys()) - campos_obrigatorios
     if extras:
         raise ManifestoInvalido(f"Campos não reconhecidos no manifesto: {sorted(extras)}")
@@ -160,3 +166,4 @@ def verificar_integridade_arquivo(caminho_arquivo: str, manifesto: Manifesto) ->
 def salvar_manifesto(documento: Dict[str, Any], caminho_saida: str) -> None:
     with open(caminho_saida, "w", encoding="utf-8") as f:
         json.dump(documento, f, sort_keys=True, indent=2)
+

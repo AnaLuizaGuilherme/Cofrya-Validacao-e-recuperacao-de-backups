@@ -18,12 +18,17 @@ import hashlib
 import re
 import secrets
 import sqlite3
+import time
+import threading
 from contextlib import closing
 from pathlib import Path
 
 PADRAO_USUARIO = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 ITERACOES_PBKDF2 = 200_000
 TAMANHO_MINIMO_SENHA = 8
+MAX_TENTATIVAS = 8
+JANELA_TENTATIVAS_S = 600
+_TRAVA_LOGIN = threading.Lock()
 
 
 class ErroAutenticacao(Exception):
@@ -43,6 +48,7 @@ def _conectar(caminho_db: Path) -> sqlite3.Connection:
         )
         """
     )
+    conexao.execute("CREATE TABLE IF NOT EXISTS tentativas_login (username TEXT PRIMARY KEY, falhas INTEGER NOT NULL, inicio REAL NOT NULL)")
     return conexao
 
 
@@ -61,7 +67,7 @@ def validar_username(username: str) -> str:
 
 def criar_usuario(caminho_db: Path, username: str, senha: str) -> None:
     username = validar_username(username)
-    if len(senha) < TAMANHO_MINIMO_SENHA:
+    if not TAMANHO_MINIMO_SENHA <= len(senha) <= 1024:
         raise ErroAutenticacao(f"A senha precisa ter pelo menos {TAMANHO_MINIMO_SENHA} caracteres.")
 
     with closing(_conectar(caminho_db)) as conexao:
@@ -72,24 +78,37 @@ def criar_usuario(caminho_db: Path, username: str, senha: str) -> None:
             raise ErroAutenticacao("Esse nome de usuário já existe.")
         salt = secrets.token_bytes(16)
         hash_senha = _hash_senha(senha, salt)
-        conexao.execute(
-            "INSERT INTO usuarios (username, salt, hash) VALUES (?, ?, ?)",
-            (username, salt.hex(), hash_senha),
-        )
+        try:
+            conexao.execute(
+                "INSERT INTO usuarios (username, salt, hash) VALUES (?, ?, ?)",
+                (username, salt.hex(), hash_senha),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ErroAutenticacao("Esse nome de usuário já existe.") from exc
         conexao.commit()
 
 
 def verificar_login(caminho_db: Path, username: str, senha: str) -> bool:
     username = username.strip()
-    with closing(_conectar(caminho_db)) as conexao:
-        linha = conexao.execute(
-            "SELECT salt, hash FROM usuarios WHERE username = ?", (username,)
-        ).fetchone()
-    if not linha:
+    if len(username) > 32 or len(senha) > 1024:
         return False
-    salt_hex, hash_esperado = linha
-    hash_calculado = _hash_senha(senha, bytes.fromhex(salt_hex))
-    return secrets.compare_digest(hash_calculado, hash_esperado)
+    with _TRAVA_LOGIN, closing(_conectar(caminho_db)) as conexao:
+        agora = time.time()
+        tentativa = conexao.execute("SELECT falhas, inicio FROM tentativas_login WHERE username = ?", (username,)).fetchone()
+        if tentativa and agora - tentativa[1] < JANELA_TENTATIVAS_S and tentativa[0] >= MAX_TENTATIVAS:
+            return False
+        linha = conexao.execute("SELECT salt, hash FROM usuarios WHERE username = ?", (username,)).fetchone()
+        salt = bytes.fromhex(linha[0]) if linha else bytes(16)
+        calculado = _hash_senha(senha, salt)
+        valido = bool(linha and secrets.compare_digest(calculado, linha[1]))
+        if valido:
+            conexao.execute("DELETE FROM tentativas_login WHERE username = ?", (username,))
+        else:
+            falhas, inicio = tentativa if tentativa and agora - tentativa[1] < JANELA_TENTATIVAS_S else (0, agora)
+            conexao.execute("INSERT OR REPLACE INTO tentativas_login VALUES (?, ?, ?)", (username, falhas + 1, inicio))
+            conexao.execute("DELETE FROM tentativas_login WHERE inicio < ?", (agora - JANELA_TENTATIVAS_S,))
+        conexao.commit()
+        return valido
 
 
 def usuario_existe(caminho_db: Path, username: str) -> bool:
@@ -103,7 +122,7 @@ def usuario_existe(caminho_db: Path, username: str) -> bool:
 def trocar_senha(caminho_db: Path, username: str, senha_atual: str, senha_nova: str) -> None:
     if not verificar_login(caminho_db, username, senha_atual):
         raise ErroAutenticacao("Senha atual incorreta.")
-    if len(senha_nova) < TAMANHO_MINIMO_SENHA:
+    if not TAMANHO_MINIMO_SENHA <= len(senha_nova) <= 1024:
         raise ErroAutenticacao(f"A nova senha precisa ter pelo menos {TAMANHO_MINIMO_SENHA} caracteres.")
     salt = secrets.token_bytes(16)
     hash_senha = _hash_senha(senha_nova, salt)
@@ -113,3 +132,4 @@ def trocar_senha(caminho_db: Path, username: str, senha_atual: str, senha_nova: 
             (salt.hex(), hash_senha, username.strip()),
         )
         conexao.commit()
+

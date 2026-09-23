@@ -105,8 +105,12 @@ def gerar_base(semente, volume, saida, dsn_origem, chave_env, versao_aplicacao):
 @click.option("--idade-maxima-dias", default=30, show_default=True)
 @click.option("--saida", default="./results", show_default=True)
 @click.option("--cenario", default="C0", show_default=True)
-@click.option("--semente", default=0, show_default=True)
-def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias, saida, cenario, semente):
+@click.option("--semente", type=int, default=None, help="Semente experimental; inferida de seedN no ID quando omitida.")
+@click.option("--dependencias", default="", help="Lista separada por vírgula de papéis a criar antes da restauração (cenário C5)")
+@click.option("--imagem-postgres", default=None, help="Sobrescreve a imagem Docker (use uma inválida para simular C8)")
+@click.option("--provedor-ambiente", default="docker", type=click.Choice(["docker", "neon"]),
+              help="docker (padrão, local) ou neon (nuvem, sem Docker — requer NEON_API_KEY/NEON_PROJECT_ID)")
+def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias, saida, cenario, semente, dependencias, imagem_postgres, provedor_ambiente):
     """Executa uma única tentativa de verificação."""
     caminho_backup = os.path.join(repositorio, f"{copia_id}.dump")
     caminho_manifesto = os.path.join(repositorio, f"{copia_id}.manifest.json")
@@ -117,16 +121,20 @@ def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias,
         with open(caminho_referencias, "r", encoding="utf-8") as f:
             referencias = json.load(f)
 
+    lista_dependencias = [d.strip() for d in dependencias.split(",") if d.strip()]
+
     entrada = EntradaCatalogo(
         id_copia=copia_id,
         caminho_backup=caminho_backup,
         caminho_manifesto=caminho_manifesto,
         localizacao_autorizada=repositorio,
+        dependencias=lista_dependencias,
     )
     contexto = ConfiguracaoExecucao(
         chave_hmac=_obter_chave(chave_env),
         diretorio_trabalho="./tentativas",
         diretorio_saida_csv=saida,
+        provedor_ambiente=provedor_ambiente,
     )
     registro = executar_tentativa(
         entrada=entrada,
@@ -136,6 +144,7 @@ def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias,
         referencias_esperadas=referencias,
         cenario=cenario,
         semente=semente,
+        imagem_postgres_override=imagem_postgres,
     )
     RegistradorCSV(saida).gravar(registro)
     click.echo(f"Decisão: {registro.decisao} — {registro.motivo}")
@@ -168,7 +177,7 @@ def matriz(repositorio, catalogo, configs, chave_env, saida):
     for item in itens:
         id_copia = item["id_copia"]
         cenario = item.get("cenario", "C0")
-        semente = item.get("semente", 0)
+        semente = item.get("semente")
         dependencias = item.get("dependencias", [])
 
         caminho_backup = os.path.join(repositorio, f"{id_copia}.dump")
@@ -208,3 +217,4 @@ def matriz(repositorio, catalogo, configs, chave_env, saida):
 
 if __name__ == "__main__":
     cli()
+

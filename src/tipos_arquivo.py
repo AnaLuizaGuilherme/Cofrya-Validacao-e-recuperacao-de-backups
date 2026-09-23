@@ -42,7 +42,7 @@ class Evidencia:
 
 @dataclass
 class ResultadoVerificacaoArquivo:
-    decisao: str  # aprovada | reprovada
+    decisao: str  # aprovada | reprovada | inconclusiva
     evidencias: List[Evidencia] = field(default_factory=list)
 
     def adicionar(self, teste: str, aprovado: bool, esperado: Any, observado: Any, detalhe: str = "") -> None:
@@ -57,9 +57,15 @@ def verificar_csv(caminho: str, colunas_esperadas: Optional[List[str]] = None) -
     resultado = ResultadoVerificacaoArquivo(decisao="aprovada")
     try:
         with open(caminho, "r", encoding="utf-8", newline="") as f:
-            leitor = csv.reader(f)
+            leitor = csv.reader(f, strict=True)
             cabecalho = next(leitor, None)
-            n_linhas = sum(1 for _ in leitor)
+            if not cabecalho or not all(x.strip() for x in cabecalho):
+                raise csv.Error("CSV vazio ou sem cabeçalho válido")
+            n_linhas = 0
+            for linha in leitor:
+                if len(linha) != len(cabecalho):
+                    raise csv.Error("Número de campos diferente do cabeçalho")
+                n_linhas += 1
     except (OSError, UnicodeDecodeError, csv.Error) as exc:
         resultado.adicionar("abre_sem_erro", False, "arquivo legível como CSV", f"erro: {exc}")
         return resultado
@@ -90,8 +96,8 @@ def verificar_json(caminho: str, chaves_esperadas: Optional[List[str]] = None) -
     if chaves_esperadas:
         if isinstance(dados, dict):
             chaves_presentes = list(dados.keys())
-        elif isinstance(dados, list) and dados and isinstance(dados[0], dict):
-            chaves_presentes = list(dados[0].keys())
+        elif isinstance(dados, list) and dados and all(isinstance(x, dict) for x in dados):
+            chaves_presentes = sorted(set.intersection(*(set(x) for x in dados)))
         else:
             chaves_presentes = []
         faltantes = [c for c in chaves_esperadas if c not in chaves_presentes]
@@ -104,29 +110,25 @@ def verificar_json(caminho: str, chaves_esperadas: Optional[List[str]] = None) -
 
 def verificar_sqlite(caminho: str, tabelas_esperadas: Optional[List[str]] = None) -> ResultadoVerificacaoArquivo:
     resultado = ResultadoVerificacaoArquivo(decisao="aprovada")
+    conexao = None
     try:
-        conexao = sqlite3.connect(f"file:{caminho}?mode=ro", uri=True)
-        cursor = conexao.cursor()
-        cursor.execute("PRAGMA integrity_check;")
-        status = cursor.fetchone()[0]
-    except sqlite3.Error as exc:
-        resultado.adicionar("abre_sem_erro", False, "arquivo abre como banco SQLite", f"erro: {exc}")
-        return resultado
-
-    resultado.adicionar("integrity_check", status == "ok", "ok", status)
-    if status != "ok":
-        conexao.close()
-        return resultado
-
-    if tabelas_esperadas:
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tabelas_presentes = [linha[0] for linha in cursor.fetchall()]
-        faltantes = [t for t in tabelas_esperadas if t not in tabelas_presentes]
-        resultado.adicionar(
-            "tabelas_esperadas", not faltantes, tabelas_esperadas, tabelas_presentes,
-            detalhe=(f"faltando: {faltantes}" if faltantes else ""),
-        )
-    conexao.close()
+        with open(caminho, "rb") as f:
+            if f.read(16) != b"SQLite format 3\x00":
+                raise ValueError("Cabeçalho SQLite ausente ou inválido")
+        from pathlib import Path
+        conexao = sqlite3.connect(Path(caminho).resolve().as_uri() + "?mode=ro", uri=True)
+        status = conexao.execute("PRAGMA integrity_check").fetchall()
+        ok = status == [("ok",)]
+        resultado.adicionar("integrity_check", ok, "ok", status)
+        if ok and tabelas_esperadas:
+            tabelas_presentes = [x[0] for x in conexao.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+            faltantes = [t for t in tabelas_esperadas if t not in tabelas_presentes]
+            resultado.adicionar("tabelas_esperadas", not faltantes, tabelas_esperadas, tabelas_presentes)
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        resultado.adicionar("abre_sem_erro", False, "banco SQLite legível", str(exc))
+    finally:
+        if conexao is not None:
+            conexao.close()
     return resultado
 
 
@@ -140,9 +142,11 @@ def verificar_pg_dump(caminho: str, tabelas_esperadas: Optional[List[str]] = Non
         r = subprocess.run(["pg_restore", "--list", caminho], capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
         resultado.adicionar("abre_sem_erro", False, "pg_restore disponível no servidor", "pg_restore não encontrado")
+        resultado.decisao = "inconclusiva"
         return resultado
     except subprocess.TimeoutExpired:
         resultado.adicionar("abre_sem_erro", False, "leitura do índice em até 30s", "tempo esgotado")
+        resultado.decisao = "inconclusiva"
         return resultado
 
     if r.returncode != 0:
@@ -155,7 +159,12 @@ def verificar_pg_dump(caminho: str, tabelas_esperadas: Optional[List[str]] = Non
     )
 
     if tabelas_esperadas:
-        faltantes = [t for t in tabelas_esperadas if t not in r.stdout]
+        tabelas = set()
+        for linha in r.stdout.splitlines():
+            campos = linha.split()
+            if len(campos) >= 6 and campos[3] == "TABLE" and campos[4] != "DATA":
+                tabelas.add(campos[5])
+        faltantes = [t for t in tabelas_esperadas if t not in tabelas]
         resultado.adicionar(
             "tabelas_no_indice", not faltantes, tabelas_esperadas,
             "presentes" if not faltantes else f"faltando: {faltantes}",
@@ -212,6 +221,10 @@ def verificar_arquivo_generico(
         return resultado
     resultado.adicionar("existe", True, "arquivo presente", "presente")
 
+    if caminho_manifesto and not chave_hmac:
+        resultado.adicionar("autenticacao_manifesto", False, "chave fornecida", "chave ausente")
+        resultado.decisao = "inconclusiva"
+        return resultado
     if caminho_manifesto and chave_hmac:
         try:
             documento = manifesto_mod.carregar_documento_manifesto(caminho_manifesto)
@@ -229,7 +242,7 @@ def verificar_arquivo_generico(
             return resultado
 
         idade = datetime.now(timezone.utc) - datetime.fromisoformat(m.instante_captura)
-        dentro_da_politica = idade <= timedelta(days=idade_maxima_dias)
+        dentro_da_politica = timedelta(0) <= idade <= timedelta(days=idade_maxima_dias)
         resultado.adicionar(
             "politica_idade_maxima", dentro_da_politica,
             f"<= {idade_maxima_dias} dias", f"{idade.days} dias",
@@ -240,5 +253,6 @@ def verificar_arquivo_generico(
     parcial = verificar_conteudo(caminho_arquivo, extensao, estrutura_esperada)
     resultado.evidencias.extend(parcial.evidencias)
     if parcial.decisao != "aprovada":
-        resultado.decisao = "reprovada"
+        resultado.decisao = parcial.decisao
     return resultado
+

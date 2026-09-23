@@ -71,26 +71,24 @@ def subir_postgres_temporario(
         "-e", f"POSTGRES_DB={banco}",
     ]
     if porta_host:
-        cmd += ["-p", f"{porta_host}:{porta_container}"]
+        cmd += ["-p", f"127.0.0.1:{porta_host}:{porta_container}"]
     else:
-        cmd += ["-P"]  # publica em porta efêmera do host
+        cmd += ["-p", f"127.0.0.1::{porta_container}"]  # acesso somente local
     cmd.append(imagem)
 
-    resultado = _executar(cmd, timeout=30)
-    if resultado.returncode != 0:
-        raise ContainerNaoDisponivel(
-            f"Falha ao iniciar contêiner: {resultado.stderr.strip()}"
-        )
-
-    porta_publicada = porta_host or _descobrir_porta_publicada(nome_container, porta_container)
-
-    if not _aguardar_disponibilidade(nome_container, usuario, banco, timeout_disponibilidade_s):
-        # Registra evidência antes de propagar o erro (útil para diagnóstico).
-        derrubar_postgres_temporario(nome_container)
-        raise ContainerNaoDisponivel(
-            f"PostgreSQL não ficou disponível em {timeout_disponibilidade_s}s "
-            f"(cenário compatível com C8)."
-        )
+    try:
+        resultado = _executar(cmd, timeout=30)
+        if resultado.returncode != 0:
+            raise ContainerNaoDisponivel("Docker não conseguiu iniciar o ambiente temporário.")
+        porta_publicada = porta_host or _descobrir_porta_publicada(nome_container, porta_container)
+        if not _aguardar_disponibilidade(nome_container, usuario, banco, timeout_disponibilidade_s):
+            raise ContainerNaoDisponivel("PostgreSQL não ficou disponível dentro do prazo.")
+    except (OSError, subprocess.SubprocessError, ValueError, ContainerNaoDisponivel) as exc:
+        try:
+            derrubar_postgres_temporario(nome_container)
+        except Exception:
+            raise ContainerNaoDisponivel(f"Preparação interrompida; confira a limpeza de {nome_container}.") from exc
+        raise ContainerNaoDisponivel(f"Preparação interrompida ({type(exc).__name__}).") from exc
 
     return InstanciaTemporaria(
         nome_container=nome_container,
@@ -130,4 +128,7 @@ def _aguardar_disponibilidade(
 def derrubar_postgres_temporario(nome_container: str) -> None:
     """Remove o contêiner da tentativa. Falha de limpeza é registrada, não
     silenciada e não deve apagar uma decisão já produzida (seção 5.3)."""
-    _executar(["docker", "stop", "-t", "5", nome_container], timeout=30)
+    resultado = _executar(["docker", "rm", "-f", nome_container], timeout=30)
+    if resultado.returncode != 0 and "No such container" not in resultado.stderr:
+        raise RuntimeError(f"Limpeza Docker pendente: {nome_container}")
+

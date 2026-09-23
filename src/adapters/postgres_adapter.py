@@ -10,11 +10,23 @@ de shell a partir de entrada não confiável.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
 from .docker_adapter import InstanciaTemporaria
+
+
+def _ambiente_conexao(instancia: InstanciaTemporaria) -> dict:
+    """Monta o ambiente do subprocesso, incluindo PGSSLMODE quando a
+    instância vem do adaptador Neon (que exige TLS), sem afetar o Docker
+    local (que normalmente não tem TLS configurado)."""
+    ambiente = os.environ.copy()
+    ambiente["PGPASSWORD"] = instancia.senha
+    if getattr(instancia, "imagem", "") == "neon":
+        ambiente["PGSSLMODE"] = "require"
+    return ambiente
 
 
 @dataclass
@@ -55,8 +67,7 @@ def restaurar(
     """
     import time
 
-    ambiente = os.environ.copy()
-    ambiente["PGPASSWORD"] = instancia.senha
+    ambiente = _ambiente_conexao(instancia)
 
     cmd = [
         "pg_restore",
@@ -100,6 +111,9 @@ def preparar_dependencias(
     papeis_necessarios = papeis_necessarios or []
     extensoes_necessarias = extensoes_necessarias or []
 
+    if any(not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", nome)
+           for nome in papeis_necessarios + extensoes_necessarias):
+        raise ValueError("Nome de papel ou extensão inválido.")
     comandos_sql = []
     for papel in papeis_necessarios:
         comandos_sql.append(
@@ -109,8 +123,7 @@ def preparar_dependencias(
     for extensao in extensoes_necessarias:
         comandos_sql.append(f'CREATE EXTENSION IF NOT EXISTS "{extensao}";')
 
-    ambiente = os.environ.copy()
-    ambiente["PGPASSWORD"] = instancia.senha
+    ambiente = _ambiente_conexao(instancia)
 
     inicio = time.monotonic()
     stdout_total, stderr_total = "", ""
@@ -146,7 +159,7 @@ def executar_consulta(instancia: InstanciaTemporaria, consulta: str, timeout_s: 
     """
     import psycopg2
 
-    conexao = psycopg2.connect(
+    parametros_conexao = dict(
         host=instancia.host,
         port=instancia.porta,
         user=instancia.usuario,
@@ -154,11 +167,18 @@ def executar_consulta(instancia: InstanciaTemporaria, consulta: str, timeout_s: 
         dbname=instancia.banco,
         connect_timeout=timeout_s,
     )
+    if getattr(instancia, "imagem", "") == "neon":
+        parametros_conexao["sslmode"] = "require"
+
+    conexao = psycopg2.connect(**parametros_conexao)
     try:
+        conexao.set_session(readonly=True)
         with conexao.cursor() as cursor:
+            cursor.execute("SET statement_timeout = %s", (max(1, int(timeout_s)) * 1000,))
             cursor.execute(consulta)
             colunas = [desc[0] for desc in cursor.description] if cursor.description else []
             linhas = cursor.fetchall() if cursor.description else []
         return colunas, linhas
     finally:
         conexao.close()
+
