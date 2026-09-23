@@ -24,6 +24,8 @@ def _ambiente_conexao(instancia: InstanciaTemporaria) -> dict:
     local (que normalmente não tem TLS configurado)."""
     ambiente = os.environ.copy()
     ambiente["PGPASSWORD"] = instancia.senha
+    # Diagnósticos estáveis para distinguir falhas de conexão de erros no dump.
+    ambiente["LC_ALL"] = "C"
     if getattr(instancia, "imagem", "") == "neon":
         ambiente["PGSSLMODE"] = "require"
     return ambiente
@@ -35,6 +37,24 @@ class ResultadoRestauracao:
     stdout: str
     stderr: str
     duracao_s: float
+
+
+def falha_de_conexao(stderr: str) -> bool:
+    """Reconhece diagnósticos de conexão do cliente, sem confundir erros SQL.
+
+    Por exemplo, 'database does not exist' durante a conexão é infraestrutura;
+    'relation does not exist' ao executar um comando do dump é restauração.
+    """
+    return bool(re.search(
+        r"^(?:pg_restore|psql): error: (?:"
+        r"connection to server\b|could not connect to server\b|"
+        r"connection to database .+ failed\b|could not translate host name\b|"
+        r"could not (?:receive data from|send data to) server\b|"
+        r"server closed the connection unexpectedly\b|"
+        r"could not execute query: (?:server closed the connection unexpectedly\b|"
+        r"SSL connection has been closed unexpectedly\b|SSL SYSCALL error\b))",
+        stderr, re.MULTILINE,
+    ))
 
 
 def criar_backup_customizado(
@@ -181,4 +201,3 @@ def executar_consulta(instancia: InstanciaTemporaria, consulta: str, timeout_s: 
         return colunas, linhas
     finally:
         conexao.close()
-

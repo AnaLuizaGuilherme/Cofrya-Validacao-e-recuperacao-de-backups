@@ -37,7 +37,7 @@ from .validators import (
     validar_regras_de_negocio,
 )
 
-VERSAO_CODIGO = "0.2.0"
+VERSAO_CODIGO = "0.2.1"
 
 
 class Configuracao(str, Enum):
@@ -242,8 +242,12 @@ def executar_tentativa(
             detalhe=resultado_dependencias.stderr[:500],
         )
         if not dependencias_ok:
-            registro.decisao = Decisao.REPROVADA.value
-            registro.motivo = "Falha de dependência declarada de recuperação (C5)"
+            if postgres_adapter.falha_de_conexao(resultado_dependencias.stderr):
+                registro.decisao = Decisao.INCONCLUSIVA.value
+                registro.motivo = "Falha de conexão ao preparar dependências; verifique o ambiente e tente novamente"
+            else:
+                registro.decisao = Decisao.REPROVADA.value
+                registro.motivo = "Falha de dependência declarada de recuperação (C5)"
             return registro
 
         t0 = time.monotonic()
@@ -256,8 +260,12 @@ def executar_tentativa(
             detalhe=resultado_restauracao.stderr[:1000],
         )
         if not restauracao_ok:
-            registro.decisao = Decisao.REPROVADA.value
-            registro.motivo = "Falha na restauração nativa (pg_restore --exit-on-error)"
+            if postgres_adapter.falha_de_conexao(resultado_restauracao.stderr):
+                registro.decisao = Decisao.INCONCLUSIVA.value
+                registro.motivo = "Falha de conexão durante a restauração; verifique o ambiente e tente novamente"
+            else:
+                registro.decisao = Decisao.REPROVADA.value
+                registro.motivo = "Falha na restauração nativa (pg_restore --exit-on-error)"
             return registro
 
         if configuracao == Configuracao.C_SEM_FUNC:
@@ -323,4 +331,3 @@ def executar_tentativa(
             registro.registrar_evidencia("limpeza", False, "diretório removido", str(exc))
         registro.duracao_limpeza_s = time.monotonic() - t0
         registro.tempo_decisao_s = time.monotonic() - inicio_decisao
-

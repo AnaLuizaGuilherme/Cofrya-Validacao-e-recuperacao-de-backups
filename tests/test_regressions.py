@@ -129,7 +129,7 @@ def test_ambiente_indisponivel_e_inconclusivo(laboratorio,monkeypatch):
 
 def test_neon_remove_branch_se_preparacao_falha(monkeypatch):
     monkeypatch.setattr(neon_adapter,'_obter_config',lambda:('key','project'))
-    monkeypatch.setattr(neon_adapter,'_aguardar_endpoint',lambda *args:True)
+    monkeypatch.setattr(neon_adapter,'_aguardar_endpoint',lambda *args:'ep-test')
     criacoes=[];remocoes=[]
     def post(url,**kwargs):
         criacoes.append(kwargs['json'])
@@ -145,16 +145,19 @@ def test_neon_remove_branch_se_preparacao_falha(monkeypatch):
 
 def test_neon_retorna_banco_novo_e_credenciais_decodificadas(monkeypatch):
     monkeypatch.setattr(neon_adapter,'_obter_config',lambda:('key','project'))
-    monkeypatch.setattr(neon_adapter,'_aguardar_endpoint',lambda *args:True)
+    monkeypatch.setattr(neon_adapter,'_aguardar_endpoint',lambda *args:'ep-test')
     monkeypatch.setattr(neon_adapter.requests,'post',lambda *a,**k:SimpleNamespace(status_code=201,json=lambda:{'branch':{'id':'br-test'}}))
-    nomes=[]
-    def uri(proj,branch,headers,banco):
+    nomes=[];confirmacoes=[]
+    def uri(proj,branch,headers,banco,endpoint_id):
+        assert branch=='br-test' and endpoint_id=='ep-test'
         nomes.append(banco)
-        return 'postgresql://neondb_owner:senha%40teste@host.example/'+banco+'?sslmode=require'
+        return 'postgresql://neondb_owner:senha%40teste@ep-test.example/'+banco+'?sslmode=require'
     monkeypatch.setattr(neon_adapter,'_obter_connection_uri',uri)
+    monkeypatch.setattr(neon_adapter,'_aguardar_banco',lambda instancia,prazo:confirmacoes.append(instancia.banco))
     r=neon_adapter.subir_postgres_temporario('test')
     assert r.banco==nomes[0] and r.banco!='neondb'
     assert r.senha=='senha@teste'
+    assert confirmacoes==nomes
 
 
 def test_csv_preserva_dados_antigos_ao_adicionar_metadados(tmp_path):
@@ -174,4 +177,40 @@ def test_imports_do_diretorio_compatibilidade():
     raiz=Path(__file__).resolve().parents[1]
     proc=subprocess.run([sys.executable,'-c','import src.executor, src.results, src.auth; print(src.executor.VERSAO_CODIGO)'],cwd=raiz/'verificador_backups',capture_output=True,text=True)
     assert proc.returncode==0,proc.stderr
-    assert proc.stdout.strip()=='0.2.0'
+    assert proc.stdout.strip()=='0.2.1'
+
+
+@pytest.mark.parametrize('configuracao', [executor.Configuracao.C_SEM_FUNC, executor.Configuracao.C])
+@pytest.mark.parametrize('erro,decisao', [
+    ('pg_restore: error: connection to server at "ep-test-pooler.example" (127.0.0.1), port 5432 failed: ERROR:  database "cofrya_test" does not exist\n', 'inconclusiva'),
+    ('pg_restore: error: could not execute query: ERROR: relation "pagamentos" does not exist\n', 'reprovada'),
+    ('pg_restore: error: could not read from input file: end of file\n', 'reprovada'),
+])
+def test_falha_restauracao_distingue_conexao_de_backup(laboratorio,monkeypatch,configuracao,erro,decisao):
+    entrada,contexto=laboratorio
+    remocoes=[]
+    monkeypatch.setattr(executor.docker_adapter,'subir_postgres_temporario',lambda **kwargs:SimpleNamespace(nome_container='test'))
+    monkeypatch.setattr(executor.docker_adapter,'derrubar_postgres_temporario',lambda nome:remocoes.append(nome))
+    monkeypatch.setattr(executor.postgres_adapter,'preparar_dependencias',lambda *a,**k:SimpleNamespace(duracao_s=0,codigo_saida=0,stderr=''))
+    restauracoes=[]
+    def restaurar(*args):
+        restauracoes.append(args)
+        return SimpleNamespace(duracao_s=1,codigo_saida=1,stderr=erro)
+    monkeypatch.setattr(executor.postgres_adapter,'restaurar',restaurar)
+    def validar_indevidamente(*args):
+        pytest.fail('Não deve executar validação funcional após falha de restauração')
+    monkeypatch.setattr(executor,'validar_estrutura',validar_indevidamente)
+    r=executor.executar_tentativa(entrada,configuracao,executor.PoliticaTemporal(),contexto)
+    assert r.decisao==decisao
+    assert len(restauracoes)==1 and remocoes==['test']
+    assert any(e['teste']=='restauracao_pg_restore' and e['detalhe']==erro for e in r.evidencias)
+
+
+def test_conexao_indisponivel_ao_preparar_dependencias_e_inconclusiva(laboratorio,monkeypatch):
+    entrada,contexto=laboratorio
+    monkeypatch.setattr(executor.docker_adapter,'subir_postgres_temporario',lambda **kwargs:SimpleNamespace(nome_container='test'))
+    monkeypatch.setattr(executor.docker_adapter,'derrubar_postgres_temporario',lambda nome:None)
+    monkeypatch.setattr(executor.postgres_adapter,'preparar_dependencias',lambda *a,**k:SimpleNamespace(duracao_s=1,codigo_saida=2,stderr='psql: error: connection to server at "example" failed: timeout expired'))
+    monkeypatch.setattr(executor.postgres_adapter,'restaurar',lambda *args:pytest.fail('Não deve restaurar sem conexão'))
+    r=executor.executar_tentativa(entrada,executor.Configuracao.C_SEM_FUNC,executor.PoliticaTemporal(),contexto)
+    assert r.decisao=='inconclusiva' and 'conexão' in r.motivo

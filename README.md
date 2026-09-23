@@ -45,6 +45,10 @@ NEON_PROJECT_ID = "id-do-projeto-neon"
 
 O modo Neon cria um branch por tentativa e um banco novo dentro dele, evitando restaurar sobre tabelas herdadas do banco pai. Ao terminar, solicita a remoção do branch. Falhas de remoção são registradas e precisam ser verificadas no console Neon. A criação e remoção usam a [API oficial de branches](https://api-docs.neon.tech/reference/createprojectbranch) e a [API de bancos](https://api-docs.neon.tech/reference/createprojectbranchdatabase).
 
+A partir da versão `0.2.1`, o adaptador solicita explicitamente uma [conexão direta](https://api-docs.neon.tech/reference/getconnectionuri) (`pooled=false`) ao endpoint de escrita do branch criado. Confere o destino e espera uma consulta SQL confirmar o nome do banco temporário antes de chamar `pg_restore`. O estado `active` do endpoint, isoladamente, não é usado como prova de que o banco recém-criado já aceita conexões. A espera SQL usa o prazo de disponibilidade configurado, além da espera inicial pelo endpoint.
+
+Erros de conexão, como `database ... does not exist` durante a abertura da conexão pelo `pg_restore`, deixam a tentativa **inconclusiva**; não demonstram defeito no backup. Erros de leitura do dump ou de execução de seu SQL continuam resultando em reprovação. Não há repetição automática de restaurações parciais. Tentativas antigas são preservadas: após uma atualização, execute uma nova tentativa e confira a coluna `versao_codigo` no resumo.
+
 Neon é uma alternativa de demonstração em nuvem. Não equivale ao ambiente Docker do protocolo experimental: rede, provedor, versão do servidor e recursos são diferentes. Não misture os tempos dos dois ambientes na mesma comparação sem controlar essas diferenças.
 
 ## Contas e persistência
@@ -86,7 +90,7 @@ O executor local requer Docker, `pg_restore`, `psql` quando há dependências de
 
 ## Resultados e métricas
 
-`resumo.csv` e `evidencias.csv` são ligados por `id_tentativa`. Novos registros incluem versão `0.2.0`, instante UTC, provedor e hash das referências. Preparação inclui inicialização do ambiente e dependências. O tempo total inclui limpeza. CPU, memória e espaço permanecem `NA` enquanto não houver instrumentação; não são zeros nem medições.
+`resumo.csv` e `evidencias.csv` são ligados por `id_tentativa`. Novos registros incluem versão `0.2.1`, instante UTC, provedor e hash das referências. Preparação inclui inicialização do ambiente e dependências. O tempo total inclui limpeza. CPU, memória e espaço permanecem `NA` enquanto não houver instrumentação; não são zeros nem medições.
 
 Registros anteriores à correção não devem fundamentar a decomposição de tempos: a inicialização não era somada à preparação. O exemplo legado também possui semente declarada `0` e ID `seed1`; reconcilie com os arquivos de origem ou repita o ensaio. O programa **não altera essa evidência retroativamente**. Ao acrescentar registros a CSVs legados compatíveis, apenas estende o cabeçalho; metadados antigos desconhecidos ficam `NA`. Escrita CSV é sequencial por processo; use uma instância por pasta de resultados.
 
