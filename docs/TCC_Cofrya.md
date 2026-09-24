@@ -1,589 +1,504 @@
-# COFRYA
-
-## Verificação automatizada da integridade e da recuperabilidade de backups de bancos de dados
-
-Ana Luiza Guilherme
-
-Mogi das Cruzes-SP
-
-2026
-
-# RESUMO
-
-A existência de uma cópia de segurança não demonstra, isoladamente, sua capacidade de recuperar dados corretos. Este trabalho desenvolveu e avaliou o Cofrya, protótipo em Python e Streamlit para verificação de backups lógicos PostgreSQL. A solução combina manifesto autenticado por HMAC-SHA-256, conferência de integridade, restauração temporária no Neon e validações de estrutura, contagens e totalização de pedidos. Foram comparadas quatro configurações: A, baseada na existência dos arquivos; B, que acrescenta autenticação, política temporal e integridade; C_sem_func, que acrescenta restauração; e C, que inclui validação funcional. O protocolo compreende os cenários C0–C7, preparados com dados sintéticos de uma base de mil pedidos e semente 1. Após a exclusão auditável de repetições e de registros com identificação incompatível, foram analisadas 31 tentativas. A combinação C7/C_sem_func não possui registro. No conjunto comum de falhas C1–C6, A identificou zero de seis falhas; B, três; C_sem_func, quatro; e C, seis. A configuração C detectou a omissão de tabela e a inconsistência de totalização que passaram pela autenticação e pela restauração. Os tempos foram analisados de forma descritiva, sem estimar estabilidade de desempenho. Os resultados sustentam, no recorte observado, o valor de verificar os dados após restaurar. O estudo é exploratório: uma semente, um volume e uma execução selecionada por combinação não permitem generalizar taxas de detecção. A aplicação, o código, a matriz e as métricas agregadas estão disponíveis publicamente no Streamlit e no GitHub. Os registros completos e a auditoria acompanham o trabalho como material suplementar entregue à autora.
-
-Palavras-chave: cópias de segurança; PostgreSQL; recuperabilidade; validação funcional; Streamlit; Neon.
-
-# ABSTRACT
-
-The existence of a backup does not, by itself, demonstrate that it can recover correct data. This study developed and evaluated Cofrya, a Python and Streamlit prototype for verifying PostgreSQL logical backups. The solution combines HMAC-SHA-256 authenticated manifests, integrity checks, temporary restoration on Neon, and validation of table presence, record counts, and order totals. Four configurations were compared: A checks file existence; B adds authentication, age policy, and integrity; C_sem_func adds restoration; and C adds functional validation. The protocol covers scenarios C0–C7, prepared with a synthetic database of one thousand orders and seed 1. After auditable exclusion of repeated attempts and records with incompatible identifiers, 31 attempts were analyzed. The combination C7/C_sem_func was not recorded. In the common set of faulty scenarios C1–C6, A detected zero out of six faults, B detected three, C_sem_func detected four, and C detected all six. Configuration C detected an omitted table and inconsistent order totals despite successful authentication and restoration. Execution times were analyzed descriptively, without estimating performance stability. These observations support checking recovered data in addition to restoring it within the scope examined. The study is exploratory: one seed, one data volume, and one selected execution per combination do not establish general detection rates. The application, source code, results matrix, and aggregate metrics are publicly available on Streamlit and GitHub. The complete records and selection audit accompany the thesis as supplementary material delivered to the author.
-
-Keywords: backups; PostgreSQL; recoverability; functional validation; Streamlit; Neon.
-
-# LISTA DE FIGURAS
-
-- Figura 1 – Arquitetura da execução hospedada
-- Figura 2 – Tela de acesso à aplicação
-- Figura 3 – Preparação de uma tentativa C4 na configuração C
-- Figura 4 – Verificação de índice e aviso sobre o limite da análise
-- Figura 5 – C4 restaurado sem erro e reprovado pela validação funcional
-
-# LISTA DE TABELAS
-
-- Tabela 1 – Composição da base de referência
-- Tabela 2 – Etapas habilitadas por configuração
-- Tabela 3 – Matriz de decisões esperadas
-- Tabela 4 – Composição da amostra analítica
-- Tabela 5 – Decisões observadas sem repetições
-- Tabela 6 – Detecção no conjunto comum C1–C6
-- Tabela 7 – Durações das tentativas que chegaram à restauração, em segundos
-- Tabela 8 – Exclusões e tentativa preservada
-
-# 1 INTRODUÇÃO
-
-A continuidade de sistemas informatizados depende tanto da preservação de arquivos quanto da possibilidade de recuperar operações e dados coerentes. Cópias de segurança ocupam um lugar central nesse processo, mas a mensagem de sucesso de uma exportação descreve somente uma etapa. Entre o momento da captura e a utilização de um backup podem surgir truncamento, alteração de bytes, desatualização, troca de arquivos e incompatibilidades do ambiente de destino. A própria origem pode produzir uma exportação incompleta ou registrar informações inconsistentes antes da assinatura do arquivo.
-
-A ANPD (2021) inclui controles de acesso e cópias de segurança entre as medidas orientativas de segurança da informação para agentes de tratamento de pequeno porte. O planejamento de contingência também articula recuperação, prioridades operacionais e testes de procedimentos, conforme Swanson et al. (2010). Essas referências fundamentam a relevância do tema, sem implicar que a ferramenta desenvolvida certifique conformidade normativa ou substitua um plano organizacional de continuidade.
-
-Incidentes de ransomware ampliam o interesse por recuperação, mas não esgotam o problema. Sarabi et al. (2025) estudam a evolução desses incidentes por meio de um conjunto longitudinal de relatos. O presente trabalho não reproduz ataques de ransomware nem estima sua incidência. Seu foco é uma questão operacional mais delimitada: quais evidências permitem distinguir a presença de um arquivo da recuperação de um conjunto de dados utilizável?
-
-Para investigar essa questão, foi desenvolvido o Cofrya. O protótipo oferece acesso por navegador, geração e verificação de manifestos, restauração controlada de backups PostgreSQL e apresentação de evidências por tentativa. A versão final utiliza Python e Streamlit na interface e no executor, com Neon como provedor de PostgreSQL temporário nos ensaios em nuvem. O código também mantém um adaptador Docker para uso local, mas os resultados analisados neste trabalho pertencem exclusivamente ao conjunto exportado com provedor Neon.
-
-## 1.1 Problema e delimitação
-
-O problema de pesquisa é a insuficiência de verificações que tratam existência, integridade binária e recuperabilidade como propriedades equivalentes. Um backup pode existir, corresponder ao hash de um manifesto autêntico e ser restaurado sem erro, mas não conter uma tabela necessária. Também pode preservar fielmente um total de pedido incorreto. Nessas situações, aprovar o arquivo a partir de critérios limitados não equivale a demonstrar sua adequação ao uso pretendido.
-
-O recorte adotado é uma aplicação sintética de gestão de pedidos, composta por cinco tabelas em PostgreSQL. A análise considera cópias lógicas em formato customizado e oito cenários controlados, C0–C7. Não abrange recuperação de sistemas operacionais, consistência distribuída entre múltiplos serviços, restauração de ambientes empresariais completos ou detecção universal de alterações maliciosas. A validade das conclusões está vinculada aos artefatos, às regras e às condições descritas na metodologia.
-
-## 1.2 Pergunta de pesquisa e hipótese
-
-A pergunta que orienta o trabalho é: em backups lógicos PostgreSQL, que ganho de detecção é observado ao acrescentar restauração e validação funcional à verificação de existência, autenticação e integridade, e quais tempos são registrados nas etapas executadas?
-
-A hipótese é que a restauração revele problemas de dependência do ambiente e que a validação funcional identifique falhas de completude e de negócio que não são detectadas pelo hash. A contrapartida esperada é a execução de etapas adicionais. A avaliação final trata o custo em termos de durações registradas: não foram obtidas medições de CPU, memória ou espaço temporário que sustentem conclusões sobre consumo computacional global.
-
-## 1.3 Objetivos
-
-O objetivo geral foi desenvolver e avaliar um protótipo de verificação automatizada de backups PostgreSQL, combinando autenticação, integridade, restauração temporária e testes sobre os dados recuperados.
-
-Os objetivos específicos foram estabelecer critérios de decisão; implementar manifestos autenticados e política temporal; integrar um ambiente descartável de restauração; construir cenários sintéticos com falhas conhecidas; comparar quatro configurações de verificação; registrar decisões e durações; e disponibilizar interface, código e evidências que permitam inspecionar e reproduzir a análise.
-
-O escopo final preserva a comparação entre etapas e explicita as entregas efetivamente realizadas. A proposta inicial de múltiplos volumes, sementes e repetições de desempenho não foi utilizada para caracterizar a amostra final. Os resultados apresentados derivam de uma semente e de um volume, com remoção das tentativas repetidas conforme regra documentada.
-
-## 1.4 Organização e acesso ao produto
-
-O capítulo 2 apresenta os conceitos utilizados; o capítulo 3 discute trabalhos e ferramentas relacionados; o capítulo 4 descreve o protocolo e o tratamento dos dados; o capítulo 5 documenta a implementação; o capítulo 6 analisa os resultados e suas limitações; e o capítulo 7 apresenta as considerações finais.
-
-A aplicação está disponível em https://cofrya.streamlit.app. O repositório público está em https://github.com/AnaLuizaGuilherme/Cofrya-Validacao-e-recuperacao-de-backups. A matriz e as métricas agregadas estão em docs/resultados; as imagens, em docs/imagens. Os CSVs detalhados e a auditoria acompanham o trabalho como material suplementar entregue à autora. Esses endereços permitem relacionar a descrição acadêmica ao produto entregue.
-
-# 2 FUNDAMENTAÇÃO TEÓRICA
-
-## 2.1 Existência, integridade e autenticidade
-
-Neste trabalho, existência significa que os arquivos esperados estão disponíveis no local autorizado. Integridade binária significa que tamanho e resumo criptográfico correspondem à referência autenticada. Autenticidade do manifesto significa que a mensagem foi validada com a chave compartilhada pertencente ao domínio de confiança. Essas propriedades são complementares e possuem limites distintos.
-
-O Cofrya calcula SHA-256 sobre o conteúdo do backup e autentica os metadados com HMAC-SHA-256. Um hash sem proteção de origem permite que alguém altere simultaneamente arquivo e valor de referência. O HMAC vincula o manifesto à chave e permite detectar modificações não autorizadas dentro desse modelo. A biblioteca hmac do Python oferece o mecanismo utilizado e comparação apropriada de resumos (Python Software Foundation, s.d.). HMAC não cifra o arquivo e não constitui assinatura digital assimétrica com não repúdio.
-
-A referência autenticada descreve o arquivo que foi produzido, não a correção de todos os fatos nele contidos. Se uma exportação incompleta for assinada legitimamente, a autenticação continuará válida. De forma semelhante, um valor de negócio incorreto anterior à exportação pode ser preservado sem qualquer divergência binária. Essa separação fundamenta a criação de cenários que falham depois da restauração, embora passem pela integridade.
-
-## 2.2 Recuperabilidade e correção funcional
-
-Recuperabilidade é tratada como uma propriedade relativa a um procedimento e a critérios explícitos. Para a configuração C_sem_func, a evidência exigida é a conclusão da restauração nativa sem erro. Para C, exige-se adicionalmente que o banco restaurado satisfaça o conjunto de validações implementado. Nenhuma dessas decisões deve ser interpretada fora de seu escopo: C não demonstra a correção de regras que não foram verificadas.
-
-O PostgreSQL distingue a inspeção de arquivos de backup do uso efetivo dos dados recuperados. A documentação de pg_verifybackup, voltada a backups físicos de cluster, recomenda restaurações de teste mesmo após verificações de integridade. Essa recomendação é conceitualmente pertinente ao problema investigado, embora pg_verifybackup não seja o mecanismo utilizado para os arquivos lógicos deste estudo (PostgreSQL Global Development Group, s.d.a).
-
-Após restaurar, o Cofrya verifica a presença das tabelas esperadas, suas contagens e a igualdade entre o total declarado de cada pedido e a soma de seus itens. Essas consultas constituem um oráculo operacional limitado. Elas não comparam cada célula com a origem, não verificam todas as colunas e restrições do esquema e não exercitam todas as operações de uma aplicação real. A confiança no resultado depende também da qualidade dessas referências e regras.
-
-## 2.3 Backup lógico PostgreSQL e restauração
-
-O backup lógico representa objetos e dados que podem ser reconstruídos por comandos executados no servidor de destino. No formato customizado, pg_dump produz um arquivo interpretado por pg_restore. A restauração utiliza --exit-on-error para interromper a execução diante de erro, e --no-owner para não depender da reprodução dos proprietários originais. As permissões do dump continuam relevantes, aspecto utilizado no cenário de papel ausente (PostgreSQL Global Development Group, s.d.b).
-
-A operação pg_restore --list apresenta o índice do arquivo. Ela não executa a carga dos registros nem as consultas de negócio. Por isso, o módulo complementar de leitura de arquivos do Cofrya distingue explicitamente a leitura do índice da restauração completa. Um índice legível não afasta a possibilidade de dados incorretos, dependências ausentes ou falhas em uma etapa posterior.
-
-## 2.4 Atualidade, identidade e critérios temporais
-
-Uma cópia antiga pode ser íntegra e autêntica, mas inadequada à política de recuperação. O trabalho utiliza uma idade máxima de 30 dias, comparada com o instante de captura declarado no manifesto autenticado. O identificador da cópia também deve corresponder ao solicitado. Esses controles permitem distinguir corrupção, adulteração e inadequação temporal.
-
-Os objetivos RPO e RTO pertencem ao planejamento de continuidade e devem refletir necessidades organizacionais (Swanson et al., 2010). Neste estudo, a idade máxima de 30 dias é um parâmetro de laboratório; não é apresentada como RPO adequado a uma empresa. Da mesma forma, a duração de uma tentativa do Cofrya não mede um RTO empresarial, pois não inclui diagnóstico de incidente, decisão humana, retorno do serviço ou validação de toda a operação.
-
-## 2.5 Restauração temporária em nuvem
-
-Um ambiente temporário permite executar a restauração sem sobrepor o banco de origem utilizado pelo experimento. No Neon, branches possibilitam ramificar o estado de um projeto e realizar mudanças independentes no ramo criado (Neon, s.d.a). Entretanto, ramificar não significa iniciar automaticamente com um banco vazio: o estado do ramo pai pode ser herdado.
-
-A implementação do Cofrya trata esse detalhe criando um novo banco dentro do branch temporário. Dessa maneira, a presença de uma tabela no banco pai não mascara sua ausência no dump. Os papéis, por pertencerem ao contexto do branch, merecem atenção específica nos testes de dependência. O isolamento empregado é lógico e operacional; o experimento não pressupõe exclusividade física de recursos do provedor.
-
-# 3 TRABALHOS E FERRAMENTAS RELACIONADOS
-
-## 3.1 Verificação de armazenamento e testes de recuperação
-
-Ferramentas de backup oferecem mecanismos relevantes de integridade, mas seus resultados precisam ser associados ao que foi efetivamente examinado. O restic disponibiliza verificação de estrutura e consistência do repositório, com opções de leitura dos dados armazenados (Restic, s.d.). Essa função trata a integridade do acervo sob gestão da ferramenta. O Cofrya investiga outra camada: a reconstrução de um banco lógico e a avaliação de condições da aplicação sobre esse banco.
-
-O AWS Backup oferece testes de restauração e recursos para acompanhar a validação dos recursos restaurados (Amazon Web Services, s.d.). A aproximação com o presente trabalho está na necessidade de ensaiar a recuperação. A diferença é o recorte: o Cofrya constitui um protótipo acadêmico com artefatos sintéticos, configurações comparáveis e verificações SQL específicas, sem pretensão de substituir a abrangência de um serviço comercial.
-
-O pg_verifybackup é adequado ao contexto de backups físicos produzidos com pg_basebackup, enquanto o experimento utiliza arquivos lógicos customizados. A distinção evita aplicar indevidamente uma ferramenta a um formato diferente. A contribuição do Cofrya não é propor um novo hash ou um novo mecanismo de restauração, mas integrar mecanismos existentes com critérios funcionais e evidências por tentativa.
-
-## 3.2 Estudos sobre consistência e falhas controladas
-
-Pillai et al. (2014) mostram a complexidade dos protocolos de persistência utilizados por aplicações sobre sistemas de arquivos. Mohan et al. (2018) apresentam testes de falhas com exploração limitada e ferramentas como CrashMonkey e ACE para investigar consistência após interrupções. Esses estudos operam em camadas diferentes da restauração lógica PostgreSQL, mas reforçam a utilidade de definir falhas, estados esperados e critérios de observação antes de interpretar um resultado.
-
-O presente estudo não injeta quedas de energia no sistema de arquivos e não reproduz os experimentos dessas publicações. Utiliza, como princípio metodológico, falhas controladas e comparações entre níveis de verificação. Cada cenário possui uma alteração principal, permitindo examinar qual etapa produz a primeira evidência de inadequação.
-
-O sistema Iris associa mecanismos de autenticidade, integridade e recuperabilidade ao armazenamento remoto (Stefanov et al., 2012). A aproximação conceitual está na necessidade de distinguir essas propriedades. O Cofrya, por sua vez, não implementa provas criptográficas de recuperabilidade: obtém evidências operacionais pela execução da restauração e de consultas sobre os dados recuperados.
-
-## 3.3 Posicionamento da contribuição
-
-A contribuição prática é um fluxo acessível pelo navegador que reúne verificações progressivas e apresenta seus resultados em linguagem operacional. A contribuição experimental é a demonstração, em um domínio sintético controlado, de casos que passam por etapas anteriores e falham em etapas posteriores. O artefato também explicita decisões inconclusivas, em vez de atribuir automaticamente ao backup qualquer falha de infraestrutura.
-
-A comparação é interna ao Cofrya: A, B, C_sem_func e C compartilham os componentes das etapas comuns. Não foi realizado benchmark entre o Cofrya, restic, AWS Backup ou outros produtos. As ferramentas relacionadas contextualizam o problema e delimitam a proposta, sem fornecer uma classificação de desempenho ou segurança entre soluções heterogêneas.
-
-# 4 METODOLOGIA
-
-## 4.1 Natureza da pesquisa e unidade de análise
-
-A pesquisa é aplicada, com desenvolvimento de artefato e avaliação experimental exploratória. A unidade de análise é uma tentativa de verificação de uma cópia, sob determinada configuração, cenário e semente. A tentativa possui identificador próprio, decisão, motivo, durações e metadados de rastreabilidade.
-
-O conjunto final utiliza a versão 0.2.2 do executor, registrada nas linhas exportadas, e provedor Neon. A revisão documental e de delimitação do protocolo foi identificada no código como 0.2.3. Essa revisão não altera a versão registrada nos ensaios anteriores nem constitui uma nova coleta. Testes automatizados do código são tratados separadamente dos registros experimentais.
-
-As execuções foram realizadas sequencialmente pela interface. Não houve randomização da ordem documentada no CSV, distribuição entre múltiplos provedores nem repetições mantidas para estimar desempenho. A interpretação dos tempos, portanto, é descritiva e condicionada ao estado da rede e do provedor no momento de cada execução.
-
-## 4.2 Base sintética e sementes
-
-A base representa clientes, produtos, pedidos, itens de pedido e pagamentos. O conjunto de referência da semente 1 possui 200 clientes, 50 produtos, 1.000 pedidos, 2.976 itens e 1.000 pagamentos. Os valores são sintéticos; não foram utilizadas informações pessoais de clientes reais.
-
-A semente controla as escolhas pseudoaleatórias do gerador. Reexecutar o mesmo gerador, com a mesma versão, volume e semente, permite reconstruir os dados esperados. A semente não é senha, não é chave HMAC e não identifica uma repetição de desempenho. Todas as tentativas selecionadas utilizaram semente 1; assim, o estudo não mede sensibilidade a diferentes distribuições de dados produzidas por outras sementes.
-
-As referências são capturadas antes da injeção de falhas e fornecidas em arquivo JSON separado. O executor registra seu SHA-256 para rastrear a entrada utilizada. Esse registro não autentica a origem do arquivo: sua confiabilidade depende do controle exercido pela pesquisadora. O validador implementado consome as cinco contagens e calcula a regra de totalização diretamente no banco restaurado; não realiza comparação exaustiva de todos os valores com o JSON.
-
-Tabela 1 – Composição da base de referência
-
-| Entidade | Quantidade |
+# Cofrya — Documentação técnica
+
+Guia de implementação do verificador de backups PostgreSQL desenvolvido no TCC. A implementação descrita é a **0.2.3**, definida em [`VERSAO_CODIGO`](../src/executor.py); os ensaios consolidados foram executados na **0.2.2**.
+
+[Aplicação](https://cofrya.streamlit.app) · [README](../README.md) · [Resultados e seleção da amostra](resultados/README.md)
+
+## Navegação
+
+- [Arquitetura](#arquitetura)
+- [Contratos de entrada](#contratos-de-entrada)
+- [Executor e decisões](#executor-e-decisões)
+- [Validação funcional e SQL](#validação-funcional-e-sql)
+- [API Python](#api-python)
+- [CLI e geração de cenários](#cli-e-geração-de-cenários)
+- [Adaptadores de infraestrutura](#adaptadores-de-infraestrutura)
+- [Persistência e concorrência](#persistência-e-concorrência)
+- [Módulo de arquivos](#módulo-de-arquivos)
+- [Testes e manutenção](#testes-e-manutenção)
+- [Dados experimentais](#dados-experimentais)
+- [Diagnóstico](#diagnóstico)
+
+## Arquitetura
+
+O processo Python hospedado executa a interface Streamlit e o núcleo de verificação. A CLI chama o mesmo executor. O PostgreSQL temporário é disponibilizado por Docker ou Neon; `pg_restore` e `psql` são executados no host do processo Python, inclusive quando o destino é remoto.
+
+| Módulo | Interface principal | Responsabilidade |
+| --- | --- | --- |
+| [`streamlit_app.py`](../streamlit_app.py), [`cofrya_app.py`](../cofrya_app.py) | `main()` | Inicialização, sessão autenticada e navegação |
+| [`postgres_app.py`](../postgres_app.py) | `executar_formulario()`, `renderizar_pagina()` | Pré-validação, upload, trava de execução e histórico |
+| [`src/cli.py`](../src/cli.py) | `gerar-base`, `verificar`, `matriz` | Entrada pela linha de comando |
+| [`src/executor.py`](../src/executor.py) | `executar_tentativa()` | Etapas, interrupções, classificação e limpeza |
+| [`src/manifest.py`](../src/manifest.py) | `Manifesto`, `assinar_manifesto()`, `verificar_manifesto()` | JSON canônico, HMAC e integridade do arquivo |
+| [`src/validators.py`](../src/validators.py) | `validar_estrutura()`, `validar_conteudo()`, `validar_regras_de_negocio()` | Consultas sobre o banco restaurado |
+| [`src/adapters/`](../src/adapters/) | Adaptadores de arquivo, PostgreSQL, Docker e Neon | Cópia local, subprocessos e ciclo de vida da infraestrutura |
+| [`src/results.py`](../src/results.py) | `RegistroTentativa`, `RegistradorCSV` | Modelo do resultado e gravação em CSV |
+| [`src/experiment_inputs.py`](../src/experiment_inputs.py), [`src/safe_files.py`](../src/safe_files.py) | Validação de IDs, rótulos, referências e uploads | Contratos de entrada da interface |
+| [`src/auth.py`](../src/auth.py) | `criar_usuario()`, `verificar_login()`, `trocar_senha()` | Contas e credenciais em SQLite |
+| [`src/generator.py`](../src/generator.py), [`src/scenarios.py`](../src/scenarios.py) | Base sintética e funções de injeção | Preparação do laboratório |
+| [`arquivos_app.py`](../arquivos_app.py), [`src/tipos_arquivo.py`](../src/tipos_arquivo.py) | `verificar_arquivo_generico()` | Leitura e integridade de arquivos complementares |
+
+`verificador_backups/` mantém entradas de compatibilidade. Novas alterações devem usar os módulos da raiz e `src/`. Não existe API HTTP própria, fila persistente ou worker distribuído entre a interface e o executor.
+
+### Dependências
+
+| Dependência | Uso |
 | --- | --- |
-| Clientes | 200 |
-| Produtos | 50 |
-| Pedidos | 1.000 |
-| Itens de pedido | 2.976 |
-| Pagamentos | 1.000 |
+| Python 3.10+ | Sintaxe e APIs utilizadas pelo projeto; CI configurada para 3.12 |
+| Streamlit, pandas | Interface e apresentação dos CSVs |
+| Click | CLI |
+| psycopg2-binary | Consultas SQL e confirmação da conexão |
+| requests | Chamadas à API Neon |
+| pytest | Testes de desenvolvimento |
+| `pg_dump`, `pg_restore`, `psql` | Clientes externos ao ambiente `pip`; precisam estar no `PATH` |
+| Docker | Necessário apenas quando o provedor escolhido é `docker` |
 
-Fonte: arquivos de referência do laboratório, semente 1.
+As faixas de versões estão em [`requirements.txt`](../requirements.txt) e [`requirements-dev.txt`](../requirements-dev.txt). Elas não constituem um lockfile. [`packages.txt`](../packages.txt) solicita `postgresql-client` na hospedagem, sem fixar a versão do cliente: confira sua compatibilidade com os dumps utilizados.
 
-## 4.3 Configurações comparadas
+## Contratos de entrada
 
-A configuração A confirma a existência do backup e do manifesto. B acrescenta autenticação do manifesto, identidade, política de idade máxima, tamanho e hash. C_sem_func executa B e a restauração nativa. C executa as mesmas etapas de C_sem_func e acrescenta validações funcionais. A ordem A, B, C_sem_func e C acompanha o acréscimo das verificações.
+### Arquivos por cópia
 
-Uma aprovação possui significado relativo à configuração. Aprovação em A não comprova autenticidade; aprovação em B não comprova restauração; aprovação em C_sem_func não comprova que as regras funcionais foram atendidas. A comparação considera essa diferença para evitar que aprovações de configurações limitadas sejam apresentadas como validação completa do backup.
+Para o identificador `pedidos_seed1_c0`, o fluxo PostgreSQL utiliza:
 
-Tabela 2 – Etapas habilitadas por configuração
+| Arquivo | Necessidade | Conteúdo |
+| --- | --- | --- |
+| `pedidos_seed1_c0.dump` | A, B, C_sem_func, C | Backup lógico em formato aceito por `pg_restore` |
+| `pedidos_seed1_c0.manifest.json` | A, B, C_sem_func, C | Metadados e autenticação HMAC; A verifica somente a existência |
+| `pedidos_seed1_c0.referencias.json` | C | Referências confiáveis para validação funcional |
 
-| Etapa | A | B | C_sem_func | C |
-| --- | --- | --- | --- | --- |
-| Existência dos arquivos | Sim | Sim | Sim | Sim |
-| HMAC, ID e idade | Não | Sim | Sim | Sim |
-| Tamanho e SHA-256 | Não | Sim | Sim | Sim |
-| Restauração PostgreSQL | Não | Não | Sim | Sim |
-| Estrutura, contagens e negócio | Não | Não | Não | Sim |
+A interface limita o dump a **200 MiB** e cada JSON a **5 MiB**. Esses limites pertencem ao caminho de upload; não são uma validação de tamanho da CLI. `validar_id()` aceita de 1 a 128 caracteres pelo padrão `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`. Os destinos de upload não podem ser links simbólicos nem escapar da pasta selecionada.
 
-Fonte: implementação de src/executor.py.
+Quando o ID segue `pedidos_seedN_cX`, a interface verifica sua coerência com a semente e o cenário. O nome do arquivo é um identificador, não uma prova de autenticidade. A CLI não aplica todo o pré-processamento do formulário; chamadores Python devem validar suas próprias entradas.
 
-## 4.4 Cenários C0 a C7
+### Manifesto autenticado
 
-C0 é o controle válido. C1 reduz o arquivo para aproximadamente 70% do tamanho original depois da assinatura. C2 altera um byte depois da assinatura, mantendo o tamanho. Em ambos, o manifesto preserva a referência anterior à alteração.
+O parser aceita exatamente os campos abaixo, rejeitando chaves duplicadas, ausentes e desconhecidas:
 
-C3 omite a tabela pagamentos antes da produção do manifesto válido. C4 altera o total declarado de um pedido antes da exportação e da assinatura, preservando estrutura e contagens. Esses cenários foram preparados para manter integridade e autenticidade do artefato produzido, mas violar os critérios funcionais do conjunto de referência.
+| Campo | Representação usada | Finalidade |
+| --- | --- | --- |
+| `formato` | String, atualmente `"1.0"` | Identificação do formato produzido |
+| `id_copia` | String | Comparação com a entrada autorizada |
+| `instante_captura` | Data/hora ISO 8601 com fuso | Política de idade e rejeição de data futura |
+| `tamanho_bytes` | Inteiro | Conferência antes de calcular o hash |
+| `sha256` | Hexadecimal | Hash dos bytes do dump |
+| `versao_banco` | String | Metadado informado na geração |
+| `versao_aplicacao` | String | Metadado informado na geração |
+| `hmac` | Hexadecimal | Autenticação dos demais campos |
 
-C5 utiliza um dump com permissão atribuída ao papel papel_leitura_restrita, ausente no destino. O papel não deve ser criado previamente pelo campo de dependências. Se for criado, a condição de falha deixa de existir. A restauração mantém as instruções de permissão do arquivo; remover essas instruções também descaracteriza o teste. O ramo pai do Neon precisa ser considerado, pois a existência herdada do papel pode atender involuntariamente à dependência.
+A tabela descreve o contrato produzido pelo código. A dataclass não aplica, por si só, validação completa de tipos ou de todas as versões de formato.
 
-C6 apresenta manifesto autêntico com data de captura 400 dias anterior à preparação, ultrapassando a política de 30 dias. A data é definida antes da assinatura. C7 altera o arquivo e os metadados de integridade sem produzir um HMAC válido com a chave confiável. Seu critério discriminante é a rejeição da autenticação, independentemente de os campos de hash e tamanho parecerem coerentes.
+O payload é reconstruído de `Manifesto`, excluindo `hmac`, e serializado por:
 
-Tabela 3 – Matriz de decisões esperadas
+```python
+payload = json.dumps(
+    asdict(manifesto), sort_keys=True, separators=(",", ":")
+).encode("utf-8")
+assinatura = hmac.new(chave, payload, hashlib.sha256).hexdigest()
+```
 
-| Cenário | Condição principal | A | B | C_sem_func | C |
-| --- | --- | --- | --- | --- | --- |
-| C0 | Cópia válida | Aprova | Aprova | Aprova | Aprova |
-| C1 | Truncamento | Aprova | Reprova | Reprova | Reprova |
-| C2 | Byte alterado | Aprova | Reprova | Reprova | Reprova |
-| C3 | Tabela omitida | Aprova | Aprova | Aprova | Reprova |
-| C4 | Total inconsistente | Aprova | Aprova | Aprova | Reprova |
-| C5 | Papel ausente | Aprova | Aprova | Reprova | Reprova |
-| C6 | Captura antiga | Aprova | Reprova | Reprova | Reprova |
-| C7 | HMAC inválido | Aprova | Reprova | Reprova | Reprova |
+Esse trecho mostra o algoritmo de [`src/manifest.py`](../src/manifest.py); para gerar um manifesto use as funções do módulo, sem montar assinaturas manualmente. A comparação usa `hmac.compare_digest`. O SHA-256 do dump é calculado em blocos de 1 MiB.
 
-Fonte: elaboração própria, a partir do protocolo e das etapas implementadas.
+Os geradores preenchem `versao_banco` com `PostgreSQL 18`; esse campo não substitui a medição da versão efetiva do cliente ou servidor. A autenticação também não comprova que os dados já estavam corretos na origem.
 
-A matriz é uma previsão condicionada à preparação correta dos artefatos, às entradas confiáveis e à disponibilidade do ambiente. A seleção do rótulo na interface não injeta a falha. O resultado esperado é definido antes da observação e não é utilizado para reescrever decisões divergentes.
+### Referências funcionais
 
-## 4.5 Decisões, evidências e interrupção de etapas
+`validar_referencias()` exige um objeto JSON com os cinco campos abaixo, todos inteiros não negativos. Booleanos não são aceitos como inteiros nesse contrato.
 
-A decisão é aprovada quando todas as verificações habilitadas terminam satisfatoriamente, reprovada quando uma condição verificada falha e inconclusiva quando não há condições de estabelecer o resultado exigido. Uma falha de conexão ou de preparação do ambiente não demonstra, por si, defeito no backup. A ausência de referências necessárias também impede a validação funcional.
-
-O executor interrompe etapas posteriores quando uma verificação anterior já determina a reprovação. Assim, uma rejeição por HMAC inválido não produz tempo de restauração. Os campos ausentes são registrados como NA, e não como zero. Essa regra é essencial para interpretar corretamente os tempos e evitar atribuir baixo custo de restauração a uma etapa que não foi executada.
-
-Os arquivos resumo.csv e evidencias.csv são ligados por id_tentativa. O primeiro apresenta o resultado agregado; o segundo contém verificações individuais, valores esperados, valores observados e detalhes. Para a análise final, a fonte quantitativa foi a exportação de resumo fornecida pela autora. As capturas de tela complementam a inspeção de etapas específicas; não substituem os CSVs nem permitem reconstruir evidências individuais ausentes de todas as tentativas.
-
-## 4.6 Consolidação sem tentativas repetidas
-
-A exportação original contém 40 linhas de dados. Foi preservada integralmente no material suplementar como resumo_original_2026-09-24.csv. O procedimento de seleção ordena os registros por instante de início UTC, utiliza a ordem original como desempate, exclui identificadores incompatíveis com a convenção pedidos_seed{semente}_{cenario} e conserva a primeira tentativa de cada combinação de cenário, semente, configuração, cópia, versão e provedor.
-
-A regra foi aplicada independentemente da decisão e da duração. Não se selecionou o ensaio mais rápido, a última tentativa aprovada ou o resultado que melhor coincidia com a hipótese. Sete repetições foram excluídas da amostra analítica. Duas tentativas registraram o valor literal Oii no campo id_copia, incompatível com a convenção de identificação dos artefatos, e foram excluídas por esse critério. Os registros disponíveis não esclarecem a origem desse valor. Essas duas linhas continuam disponíveis no arquivo bruto e não foram apagadas do histórico original.
-
-Restaram 31 combinações observadas entre as 32 possíveis. A combinação C7/C_sem_func não aparece na exportação. Ela é identificada como sem registro, categoria de completude da coleta que não se confunde com uma tentativa executada e classificada como inconclusiva. O script scripts/consolidar_resultados.py gera o conjunto selecionado, a matriz observada, as métricas e a auditoria com a relação entre tentativas repetidas e a tentativa mantida.
-
-## 4.7 Métricas e limites da comparação
-
-A cobertura observada é calculada por combinações registradas divididas pelas combinações previstas. A detecção de falhas é apresentada por configuração e por cenário. Para comparação direta das quatro configurações, utiliza-se o conjunto comum C1–C6, que possui observações em todas as configurações. C7 é analisado separadamente onde há registro.
-
-Também são apresentados os tempos individuais de restauração, validação funcional e duração total. O campo tempo_decisao_s inclui a limpeza; portanto, é descrito neste trabalho como duração total registrada. A preparação inclui disponibilização do ambiente e dependências declaradas. Não há medição de tempo de fila, CPU, memória máxima ou espaço temporário na exportação utilizada.
-
-As proporções são descritivas do conjunto de falhas preparado. Não representam probabilidades de detecção em uma população de backups. Não foram calculados intervalos de confiança, testes de significância ou médias de repetições, pois a amostra final não foi planejada para essas inferências. O controle C0 possui apenas uma observação por configuração, insuficiente para estimar uma taxa geral de falsos alertas.
-
-# 5 DESENVOLVIMENTO E PRODUTO FINAL
-
-## 5.1 Arquitetura implementada
-
-O produto final concentra interface e orquestração em Python e Streamlit. streamlit_app.py inicia a aplicação; cofrya_app.py organiza autenticação e navegação; postgres_app.py apresenta o fluxo de backups; e arquivos_app.py oferece o módulo complementar de arquivos. O executor é chamado diretamente pela aplicação. Não há API FastAPI intermediária, fila persistente ou trabalhador distribuído na versão avaliada.
-
-O repositório GitHub fornece o código implantado no Streamlit Community Cloud. O navegador é o ponto de interação, enquanto o processo hospedado executa o Python e chama os clientes PostgreSQL. Dessa forma, a execução hospedada não depende de manter o computador pessoal da autora ligado. Essa separação resolveu a necessidade de acesso externo ao protótipo, sem tornar o navegador responsável pela restauração.
-
-O módulo src/executor.py aplica as etapas habilitadas, classifica o resultado e coordena a limpeza. Os adaptadores encapsulam arquivos, PostgreSQL, Docker e Neon. src/manifest.py implementa autenticação e integridade; src/validators.py reúne as verificações funcionais; src/results.py registra os CSVs. Os caminhos antigos em verificador_backups permanecem como entradas de compatibilidade, e a implementação principal está na raiz do repositório.
-
-Figura 1 – Arquitetura da execução hospedada
-
-![Arquitetura do Cofrya](imagens/arquitetura-cofrya.png)
-
-Fonte: elaboração própria, a partir do código do Cofrya.
-
-## 5.2 Cadastro, acesso e separação por usuário
-
-A aplicação implementa cadastro com nome de usuário e senha, login, saída e troca de senha. As contas são mantidas em SQLite no diretório de dados do processo. A derivação de senha utiliza PBKDF2-HMAC-SHA-256 com 200.000 iterações e salt aleatório de 16 bytes; a comparação do resultado utiliza mecanismo de tempo constante. Existe limite de oito falhas por conta em uma janela de dez minutos.
-
-Cada usuário possui diretórios próprios para repositório, resultados e arquivos de tentativa. Os nomes e caminhos passam por validação, e a saída da conta limpa o estado da sessão, inclusive resultados e chaves exibidos pela interface. Esses mecanismos organizam o uso do protótipo, mas não equivalem a autenticação corporativa, autenticação multifator ou autorização distribuída. Não foram implementados login social e confirmação por e-mail no produto final.
-
-Figura 2 – Tela de acesso à aplicação
-
-![Tela de login](imagens/cofrya-login.png)
-
-Fonte: captura da aplicação fornecida pela autora, 23 set. 2026.
-
-## 5.3 Entrada de arquivos e política de verificação
-
-Na área Backups PostgreSQL, o usuário envia backup, manifesto e, para C, referências funcionais. Por padrão, o nome do arquivo .dump define o identificador solicitado. O usuário pode informar o ID manualmente, mas isso não altera o identificador autenticado no manifesto. Para a convenção do laboratório, a interface confere a correspondência entre nome, cenário e semente.
-
-As referências precisam constituir JSON válido com as cinco contagens esperadas, expressas como inteiros não negativos. A falta desse arquivo impede iniciar a configuração C pela interface. Essa verificação prévia evita criar um ambiente remoto quando já se sabe que a validação funcional não poderá ser concluída. A seleção da configuração e do cenário aparece junto ao resultado para facilitar a rastreabilidade.
-
-Figura 3 – Preparação de uma tentativa C4 na configuração C
-
-![Formulário PostgreSQL](imagens/cofrya-verificacao-postgresql.png)
-
-Fonte: captura da aplicação fornecida pela autora, 23 set. 2026.
-
-O manifesto contém identidade, instante de captura, tamanho, hash e metadados de versão. A chave HMAC é configurada fora do repositório, por variável de ambiente ou pelos segredos do Streamlit. A plataforma disponibiliza mecanismo específico para manter segredos separados do código publicado (Streamlit, s.d.b). A chave não é incluída nas figuras deste trabalho nem nos dados publicados.
-
-## 5.4 Restauração e validações PostgreSQL
-
-O executor trabalha com uma cópia protegida do arquivo, autentica o manifesto e confere identidade, idade e integridade antes das etapas de restauração. A criação do ambiente ocorre somente nas configurações que precisam dele e após a aprovação das verificações anteriores. Dependências explicitamente declaradas podem ser preparadas; isso precisa ser controlado para não eliminar a condição de falha de C5.
-
-A restauração nativa registra código de saída e mensagens do processo. Erros de conexão são tratados como impedimentos de infraestrutura; erros de leitura ou execução do conteúdo do dump podem determinar reprovação. Não há tentativa automática de reaplicar uma restauração parcialmente concluída sobre o mesmo banco. O descarte do recurso pertence ao ciclo de finalização da tentativa.
-
-A validação estrutural consulta as tabelas do esquema public e verifica a presença de clientes, produtos, pedidos, itens_pedido e pagamentos. A validação de conteúdo compara COUNT(*) de cada tabela com a referência. A regra de negócio compara, para cada pedido, total_declarado com a soma de quantidade multiplicada por preco_unitario de seus itens. A comparação monetária usa Decimal, duas casas decimais e arredondamento explícito.
-
-As consultas de validação são somente leitura. A verificação não inclui inserções de pedidos, simulação de pagamento, testes de APIs de negócio ou comparação integral de cada registro com a origem. Identificadores aparecem nas consultas e nas evidências de divergência, mas não existe uma etapa geral de conferência de todos os conjuntos de IDs. Esses limites são parte da especificação efetivamente avaliada.
-
-## 5.5 Integração com Neon
-
-Nos ensaios hospedados, o adaptador Neon utiliza NEON_API_KEY e NEON_PROJECT_ID para solicitar, pela API, a criação de um branch associado ao UUID da tentativa. A API também permite obter a conexão do recurso criado (Neon, s.d.b; Neon, s.d.c). O Cofrya solicita endpoint de escrita, cria um banco vazio com nome específico e obtém uma conexão direta, sem pool.
-
-O adaptador confere o destino e aguarda uma consulta SQL confirmar o nome do banco antes de iniciar pg_restore. Essa etapa foi acrescentada para distinguir o estado administrativo do endpoint da efetiva disponibilidade do banco recém-criado. Um endpoint ativo, isoladamente, não é utilizado como prova de que a restauração já pode começar.
-
-A criação de um banco vazio dentro do branch é necessária porque um branch herda o estado do pai. Restaurar no banco herdado poderia fazer uma tabela omitida parecer recuperada. O novo banco evita essa interferência para as tabelas do experimento. Papéis e outras características do branch continuam exigindo controle; no ensaio de C5, um papel herdado pode modificar a condição experimental.
-
-A conexão usa os parâmetros retornados para o branch e banco da tentativa, e a senha é transmitida ao cliente por ambiente de processo. A comunicação PostgreSQL utiliza SSL requerido na implementação. Ao finalizar, o programa solicita excluir o branch. Falhas de remoção são registradas e exigem inspeção no console do provedor; não se pressupõe que todo descarte ocorreu apenas porque foi solicitado.
-
-O Neon foi o provedor de restauração temporária, não o banco persistente das contas do aplicativo. Também não foi utilizado como substituto de um repositório permanente de backups. A interface pública permaneceu no Streamlit, e o GitHub permaneceu como repositório de código. A solução final não depende da publicação anterior em Hostinger nem de recursos Azure para executar o fluxo descrito.
-
-## 5.6 Histórico, métricas e persistência
-
-O histórico permite filtrar cenário, configuração e decisão, consultar motivos, selecionar uma tentativa e baixar seus registros. Cada resumo inclui UUID, versão do código, instante UTC, provedor e hash das referências quando aplicável. O identificador da tentativa liga a decisão agregada às verificações individuais.
-
-As durações são obtidas com relógio monotônico. Preparação, restauração, validação e limpeza são campos separados, e a duração total termina após a finalização. A instrumentação existente deixa CPU, memória e espaço como NA. Esses campos não foram preenchidos retrospectivamente a partir de estimativas.
-
-O controle de execução é sequencial no processo da aplicação. O bloqueio em memória não constitui uma fila distribuída, e não oferece persistência de trabalhos após interrupção do processo. Uma nova submissão gera uma nova tentativa, razão pela qual a consolidação científica precisa tratar repetições explicitamente.
-
-Contas, uploads e CSVs permanecem no disco do servidor Streamlit. A documentação do Community Cloud não garante persistência do armazenamento local (Streamlit, s.d.a). Assim, a exportação dos resultados é necessária para a preservação do experimento. A evolução para armazenamento externo persistente é trabalho futuro; não foi apresentada como funcionalidade já implementada.
-
-## 5.7 Módulo complementar de arquivos
-
-Além do fluxo PostgreSQL, o produto possui as opções Proteger e Verificar para CSV, JSON, SQLite e arquivos de dump. Proteger gera um manifesto autenticado; Verificar examina o arquivo e, quando fornecido manifesto com chave válida, sua integridade em relação à referência. Gerar um manifesto não prova que o conteúdo original estava correto.
-
-Sem manifesto, a interface informa que a integridade em relação ao original não foi avaliada. Para dumps PostgreSQL, informa que somente o índice foi lido e que restauração e conteúdo não foram testados. Essa distinção impede equiparar a ferramenta complementar às configurações C_sem_func e C. Seus resultados não foram misturados à matriz experimental.
-
-Figura 4 – Verificação de índice e aviso sobre o limite da análise
-
-![Leitura de índice PostgreSQL](imagens/cofrya-leitura-indice.png)
-
-Fonte: captura da aplicação fornecida pela autora, 23 set. 2026.
-
-## 5.8 Evolução, testes e entregáveis
-
-As mudanças consolidadas incluem interface Streamlit com contas, organização dos arquivos por usuário, integração Neon, conexão direta e espera SQL, banco temporário vazio, identificação automática da cópia pelo nome, exigência prévia de referências para C e registro mais explícito dos metadados. A versão final do protocolo contém exclusivamente C0–C7.
-
-Na revisão 0.2.3, o catálogo de exemplo de C5 deixa de preparar o papel cuja ausência constitui a falha. Os testes também verificam a consistência do catálogo, a rejeição de rótulos fora do protocolo e a seleção cronológica independente da decisão. Ao todo, 80 testes automatizados passaram nessa revisão. A suíte utiliza substitutos controlados nos testes de infraestrutura; esse número não corresponde a 80 restaurações no Neon.
-
-Os entregáveis são código executável, instruções de instalação, aplicação hospedada, geradores e artefatos sintéticos, registros originais, dados consolidados, auditoria da seleção, imagens da interface e este relatório. A documentação não apresenta como concluídos os componentes da arquitetura inicialmente planejada que não fazem parte do produto, como fila persistente, API intermediária e monitoramento de consumo por processo.
-
-# 6 RESULTADOS E DISCUSSÃO
-
-## 6.1 Amostra efetivamente analisada
-
-Os registros originais foram iniciados entre 23 de setembro de 2026, às 23:26 UTC, e 24 de setembro de 2026, às 01:56 UTC. Isso corresponde à noite de 23 de setembro no fuso UTC−3, coerente com as datas visíveis nas capturas. Todas as 31 linhas selecionadas registram versão 0.2.2, semente 1 e provedor Neon. Em A e B, esse campo identifica o provedor configurado, embora essas configurações não criem um banco temporário.
-
-A seleção resultou em 16 aprovações e 15 reprovações. Não houve decisão inconclusiva na amostra retida. A cobertura foi de 31/32, ou 96,875%. Os 40 registros não devem ser tratados como 40 unidades independentes do experimento: sete repetem combinações e dois correspondem a identificação incompatível.
-
-Tabela 4 – Composição da amostra analítica
-
-| Categoria | Quantidade |
+| Campo | Tabela consultada |
 | --- | --- |
-| Registros no arquivo original | 40 |
-| Repetições excluídas | 7 |
-| Identificações incompatíveis excluídas | 2 |
-| Tentativas retidas | 31 |
-| Combinações sem registro | 1 |
-| Aprovações na amostra | 16 |
-| Reprovações na amostra | 15 |
-| Inconclusivas na amostra | 0 |
+| `n_clientes` | `clientes` |
+| `n_produtos` | `produtos` |
+| `n_pedidos` | `pedidos` |
+| `n_itens` | `itens_pedido` |
+| `n_pagamentos` | `pagamentos` |
 
-Fonte: consolidação de resumo_original_2026-09-24.csv.
+`BaseSintetica.referencias_esperadas()` também produz `totais_por_pedido`. O validador de negócio atual **não compara esse mapa**: compara `pedidos.total_declarado` com a soma dos itens no próprio banco restaurado. As referências devem vir do estado correto anterior à injeção de falhas; `sha256_referencias` identifica o objeto JSON fornecido, mas não autentica sua origem.
 
-## 6.2 Matriz de resultados observados
+## Executor e decisões
 
-A Tabela 5 apresenta somente decisões registradas. Nas 31 células observadas, as decisões coincidiram com as previsões do protocolo. A célula sem registro não foi preenchida com a decisão esperada nem com resultados de testes locais.
+[`executar_tentativa()`](../src/executor.py) recebe `EntradaCatalogo`, `Configuracao`, `PoliticaTemporal` e `ConfiguracaoExecucao` e devolve `RegistroTentativa`. A persistência é uma chamada separada a `RegistradorCSV.gravar()`.
 
-Tabela 5 – Decisões observadas sem repetições
+| Configuração | Etapas habilitadas | Condição de aprovação |
+| --- | --- | --- |
+| `A` | Existência e cópia de trabalho | Dump e manifesto encontrados |
+| `B` | A + HMAC + ID/idade + tamanho/SHA-256 | Todas as verificações iniciais aprovadas |
+| `C_sem_func` | B + preparação + restauração | `pg_restore` termina com código zero |
+| `C` | C_sem_func + validação funcional | Estrutura, contagens e totalização aprovadas |
+
+Fluxo das tentativas que passam pelas verificações iniciais:
+
+```mermaid
+flowchart TD
+    entrada["Dump e manifesto"] --> copia["Cópia de trabalho"]
+    copia --> modoA{"Configuração A?"}
+    modoA -->|Sim| aprova["Aprovada no escopo escolhido"]
+    modoA -->|Não| verifica["HMAC, ID, idade e hash"]
+    verifica --> modoB{"Configuração B?"}
+    modoB -->|Sim| aprova
+    modoB -->|Não| restaura["Preparar e restaurar"]
+    restaura --> modoC{"Configuração C?"}
+    modoC -->|Não| aprova
+    modoC -->|Sim| funcional["Validar estrutura, contagens e totais"]
+    funcional --> aprova
+```
+
+O diagrama mostra o caminho de sucesso. As falhas interrompem as etapas seguintes conforme a classificação abaixo. Em C, referências inválidas interrompem o fluxo antes da criação do ambiente, após a integridade. A interface verifica as referências ainda antes de enviar os arquivos ao executor.
+
+### Classificação de falhas
+
+| Condição | Comportamento atual |
+| --- | --- |
+| Dump ou manifesto ausente | `reprovada` |
+| Manifesto ilegível, esquema recusado ou HMAC divergente | `reprovada` para as exceções de manifesto tratadas |
+| ID divergente, idade acima do limite ou captura futura | `reprovada` |
+| Tamanho ou hash divergente | `reprovada` |
+| Referências funcionais inválidas em C | `inconclusiva` |
+| Ambiente temporário não inicia | `inconclusiva` |
+| Falha de conexão reconhecida ao preparar dependências ou restaurar | `inconclusiva` |
+| Outro código de erro na preparação de dependências ou em `pg_restore` | `reprovada` |
+| Divergência funcional | `reprovada` |
+| Exceção capturada pelo tratamento geral da execução | `inconclusiva` |
+| Falha de limpeza | Registra evidência e preserva a decisão já produzida |
+
+As verificações iniciais de cenário, provedor, semente, idade mínima e caminhos ocorrem antes do bloco principal de tratamento e podem lançar `ValueError` sem produzir um registro. A CLI também pode falhar ao ler arquivos antes de chamar o executor.
+
+A detecção de erros de conexão usa padrões sobre `stderr`, com `LC_ALL=C` nos subprocessos. Não é um classificador universal de falhas de infraestrutura. Erros capturados dentro dos validadores de contagem ou totalização viram evidências funcionais negativas; consulte o detalhe antes de atribuir a causa ao conteúdo do backup.
+
+### Limpeza e medição
+
+O bloco `finally` solicita a remoção do ambiente temporário e apaga a pasta de trabalho da tentativa. A falha de limpeza não transforma automaticamente uma aprovação em reprovação. `tempo_decisao_s` é medido por relógio monotônico e inclui a limpeza; não equivale apenas à soma de preparação, restauração e validação.
+
+## Validação funcional e SQL
+
+A configuração C executa três validadores:
+
+1. **Estrutura:** consulta `information_schema.tables` no schema `public` e procura `clientes`, `produtos`, `pedidos`, `itens_pedido` e `pagamentos`.
+2. **Conteúdo:** executa `SELECT COUNT(*)` em cada tabela e compara com as referências.
+3. **Negócio:** compara o total declarado de cada pedido com a soma dos respectivos itens.
+
+Consulta de negócio implementada:
+
+```sql
+SELECT p.id, p.total_declarado,
+       COALESCE(SUM(i.quantidade * i.preco_unitario), 0) AS soma_itens
+FROM pedidos p
+LEFT JOIN itens_pedido i ON i.pedido_id = p.id
+GROUP BY p.id, p.total_declarado
+ORDER BY p.id;
+```
+
+O resultado é comparado em Python com `Decimal`, duas casas decimais e `ROUND_HALF_UP`. As conexões de consulta são configuradas como somente leitura, recebem `statement_timeout` e são fechadas em `finally`.
+
+As verificações não cobrem equivalência completa do esquema, todas as colunas, igualdade de todos os registros ou regras de negócio de outros sistemas. Para outro domínio, altere o contrato de referências e os validadores conjuntamente.
+
+## API Python
+
+Exemplo completo para executar **B** sobre uma cópia existente. Execute na raiz do projeto, com `TCC_HMAC_KEY` no ambiente e os arquivos correspondentes em `./repositorio`:
+
+```python
+import os
+from pathlib import Path
+
+from src.executor import (
+    Configuracao,
+    ConfiguracaoExecucao,
+    EntradaCatalogo,
+    PoliticaTemporal,
+    executar_tentativa,
+)
+from src.results import RegistradorCSV
+
+repositorio = Path("./repositorio").resolve()
+saida = Path("./results").resolve()
+copia_id = "pedidos_seed1_c0"
+
+entrada = EntradaCatalogo(
+    id_copia=copia_id,
+    caminho_backup=str(repositorio / f"{copia_id}.dump"),
+    caminho_manifesto=str(repositorio / f"{copia_id}.manifest.json"),
+    localizacao_autorizada=str(repositorio),
+)
+contexto = ConfiguracaoExecucao(
+    chave_hmac=os.environ["TCC_HMAC_KEY"].encode("utf-8"),
+    diretorio_trabalho=str(saida.parent / "tentativas"),
+    diretorio_saida_csv=str(saida),
+    provedor_ambiente="neon",
+)
+registro = executar_tentativa(
+    entrada=entrada,
+    configuracao=Configuracao.B,
+    politica=PoliticaTemporal(idade_maxima_dias=30),
+    contexto=contexto,
+    cenario="C0",
+    semente=1,
+)
+RegistradorCSV(saida).gravar(registro)
+print(registro.decisao, registro.motivo)
+```
+
+B não cria um branch, mesmo com `provedor_ambiente="neon"`. Para C, use `Configuracao.C`, leia o JSON de referências e passe `referencias_esperadas=referencias`, além de configurar o provedor. O executor não impõe a trava da interface: quem o chama diretamente deve coordenar concorrência e persistência.
+
+## CLI e geração de cenários
+
+Os exemplos abaixo usam Bash e pressupõem instalação conforme o [README](../README.md). Na CLI, a chave HMAC é lida de variável de ambiente; colocá-la somente em `st.secrets` não atende `_obter_chave()`.
+
+```bash
+# Use a mesma chave que assina os artefatos. Os valores abaixo são placeholders.
+export TCC_HMAC_KEY='substitua-pela-chave-do-laboratorio'
+export NEON_API_KEY='substitua-pela-chave-da-api'
+export NEON_PROJECT_ID='substitua-pelo-id-do-projeto'
+
+python -m src.cli --help
+python -m src.cli verificar --help
+```
+
+No PowerShell, atribua com `$env:TCC_HMAC_KEY = 'valor'`, e analogamente para as variáveis Neon. Os geradores que populam PostgreSQL exigem um **banco de origem vazio e exclusivo de laboratório**: não limpam dados preexistentes, e uma nova execução no mesmo banco pode falhar por chaves primárias duplicadas.
+
+### Gerar C0
+
+Crie previamente o banco de origem. Use um DSN de laboratório e configure a autenticação do cliente PostgreSQL, por exemplo via arquivo de senhas local. O comando popula o banco indicado:
+
+```bash
+python -m src.cli gerar-base \
+  --semente 1 --volume 1000 \
+  --dsn-origem 'postgresql://postgres@localhost:5432/pedidos_c0' \
+  --saida ./repositorio
+```
+
+Sem `--dsn-origem`, o comando gera SQL e um arquivo placeholder. Esse placeholder permite exercitar existência e manifesto, mas não é um dump restaurável.
+
+### Verificar uma cópia
+
+```bash
+# Autenticação e integridade; não cria PostgreSQL temporário.
+python -m src.cli verificar \
+  --copia-id pedidos_seed1_c0 --config B \
+  --repositorio ./repositorio --cenario C0 --semente 1 \
+  --saida ./results
+
+# Restauração e validação no Neon, com referências da mesma cópia.
+python -m src.cli verificar \
+  --copia-id pedidos_seed1_c0 --config C \
+  --repositorio ./repositorio --cenario C0 --semente 1 \
+  --provedor-ambiente neon --saida ./results
+```
+
+`--provedor-ambiente` aceita `docker` e `neon`; o padrão é `docker`. `--imagem-postgres` altera somente a imagem Docker. `--dependencias` recebe papéis separados por vírgulas. A idade padrão é 30 dias, ajustável por `--idade-maxima-dias`.
+
+A CLI imprime a decisão e grava o CSV. Uma decisão `reprovada` retornada pelo executor não é convertida automaticamente em código de saída não zero. Para integrar a um pipeline, use a API Python e verifique `registro.decisao`, ou leia o CSV.
+
+### Preparar cenários C1–C7
+
+| Cenário | Gerador | Comportamento do script atual |
+| --- | --- | --- |
+| C1 | [`gerar_cenario_c1.py`](../gerar_cenario_c1.py) | Assina o dump válido e depois conserva 70% dos bytes |
+| C2 | [`gerar_cenario_c2.py`](../gerar_cenario_c2.py) | Assina e depois altera um byte no meio do arquivo, preservando tamanho |
+| C3 | [`gerar_cenario_c3.py`](../gerar_cenario_c3.py) | Remove os `INSERT` da tabela escolhida; preserva sua definição no DDL |
+| C4 | [`gerar_cenario_c4.py`](../gerar_cenario_c4.py) | Adiciona 999,99 ao total do primeiro pedido antes do dump e da assinatura |
+| C5 | [`gerar_cenario_c5.py`](../gerar_cenario_c5.py) | Cria `papel_leitura_restrita` na origem e inclui `GRANT` no dump |
+| C6 | [`gerar_cenario_c6.py`](../gerar_cenario_c6.py) | Define captura antiga antes de assinar; padrão de 400 dias |
+| C7 | [`gerar_cenario_c7.py`](../gerar_cenario_c7.py) | Copia o dump de C0 e adultera `sha256`/`hmac` no manifesto, sem alterar os bytes do dump |
+
+C1–C6 recebem `--semente`, `--volume`, `--dsn-origem` e `--saida`. Exemplo para C4, usando um banco de origem separado:
+
+```bash
+python gerar_cenario_c4.py \
+  --semente 1 --volume 1000 \
+  --dsn-origem 'postgresql://postgres@localhost:5432/pedidos_c4' \
+  --saida ./repositorio
+
+python gerar_cenario_c7.py \
+  --copia-base pedidos_seed1_c0 --repositorio ./repositorio --semente 1
+```
+
+**Precisão de C3:** o cenário estrutural do protocolo utiliza tabela ausente. A função `omitir_tabela_na_exportacao()` atual remove linhas de inserção, mas mantém `CREATE TABLE` em `DDL_ESQUEMA`. O script produz, portanto, omissão de conteúdo: C pode rejeitar pela contagem de `pagamentos`, sem demonstrar ausência da tabela. Para reproduzir o ensaio estrutural, o dump preparado precisa efetivamente excluir a tabela. Essa diferença deve ser considerada ao gerar novos ensaios; os resultados históricos não foram recalculados.
+
+**Precisão de C7:** o gerador não copia referências. Para submeter C7 pela interface em C, forneça as referências confiáveis da base C0 correspondente, com a mesma semente e volume. O formulário as exige antes da execução, embora o HMAC inválido interrompa o executor antes da validação funcional. Na CLI, a autenticação falha antes de validar as referências.
+
+**Condição de C5:** deixe `dependencias` vazio e assegure que o papel esteja ausente do destino, inclusive do branch pai no Neon. Informar `--dependencias papel_leitura_restrita` cria a dependência e muda o teste para um controle com o requisito atendido. `--no-owner` não remove os comandos de concessão de privilégios; o adaptador não utiliza `--no-acl`.
+
+### Matriz local
+
+[`config/catalog.example.json`](../config/catalog.example.json) descreve cópia, cenário, semente e dependências. Prepare os artefatos antes de executar:
+
+```bash
+python -m src.cli matriz \
+  --repositorio ./repositorio \
+  --catalogo ./config/catalog.example.json \
+  --configs A --configs B --configs C_sem_func --configs C \
+  --saida ./results
+```
+
+O comando `matriz` usa Docker e não expõe `--provedor-ambiente`. Para uma matriz no Neon, chame `verificar --provedor-ambiente neon` para cada combinação ou itere sobre `executar_tentativa()` com o contexto apropriado. Use saídas distintas para ensaios de diagnóstico e coleta experimental.
+
+## Adaptadores de infraestrutura
+
+Os adaptadores Docker e Neon retornam `InstanciaTemporaria` e expõem `subir_postgres_temporario()` e `derrubar_postgres_temporario()`. O campo `nome_container` contém o nome do contêiner no Docker e o ID do branch no Neon.
+
+### Neon
+
+Sequência implementada em [`neon_adapter.py`](../src/adapters/neon_adapter.py):
+
+1. Obtém `NEON_API_KEY` e `NEON_PROJECT_ID` do ambiente, com fallback para `st.secrets`.
+2. Cria um branch e solicita endpoint `read_write`.
+3. Aguarda o endpoint ativo no branch correto.
+4. Cria um banco `cofrya_<uuid>` com proprietário `neondb_owner`.
+5. Solicita URI para esse banco e endpoint, com `pooled=false`, e confere o destino recebido.
+6. Executa `SELECT current_database()` para confirmar a conexão SQL ao banco solicitado.
+7. Entrega a instância ao executor; ao terminar, solicita a exclusão do branch.
+
+A criação do banco novo evita que tabelas herdadas do branch pai sejam confundidas com dados restaurados. Papéis ainda podem ser herdados. O adaptador aplica TLS às conexões SQL e ignora os parâmetros de imagem, CPU e memória destinados ao Docker.
+
+A espera por prontidão pode repetir a consulta de leitura. `pg_restore` não é repetido automaticamente em um banco parcialmente restaurado. Se a preparação falha após criar o branch, o adaptador tenta removê-lo; uma falha de remoção é reportada como pendência.
+
+### Docker
+
+O adaptador inicia `postgres:18`, publica uma porta disponível em `127.0.0.1`, gera senha temporária e aguarda `pg_isready`. Os padrões do contexto são `limite_cpu="1.0"`, `limite_memoria="1g"` e `timeout_disponibilidade_s=60`. Esses limites não medem consumo nem se aplicam ao Neon.
+
+### PostgreSQL
+
+O comando de restauração usa lista de argumentos de subprocesso:
+
+```text
+pg_restore --exit-on-error --no-owner --host HOST --port PORTA --username USUARIO --dbname BANCO ARQUIVO.dump
+```
+
+A senha é passada por `PGPASSWORD`. Para Neon, o subprocesso recebe `PGSSLMODE=require`. O timeout padrão de restauração é 600 segundos. O retorno inclui código de saída, stdout, stderr e duração; a evidência CSV guarda até 1.000 caracteres de stderr da restauração, não o log completo.
+
+Um ambiente temporário não é uma sandbox para SQL hostil. Use dumps sintéticos confiáveis e um projeto de laboratório.
+
+## Persistência e concorrência
+
+### Dados da aplicação
+
+`COFRYA_DATA_DIR` é uma variável de ambiente opcional; o padrão é `dados/` na raiz do projeto.
+
+| Caminho relativo ao diretório de dados | Uso |
+| --- | --- |
+| `contas.db` | Usuários e controle de tentativas de login |
+| `usuarios/<username>/repositorio/` | Dump, manifesto e referências recebidos |
+| `usuarios/<username>/results/` | Resumo e evidências das tentativas |
+| `usuarios/<username>/tentativas/` | Área de trabalho temporária |
+| `usuarios/<username>/arquivos/` | Módulo complementar |
+
+As senhas usam PBKDF2-HMAC-SHA-256 com 200.000 iterações, salt aleatório de 16 bytes e comparação em tempo constante. O limite de login é de oito falhas por conta na janela de 600 segundos. Sair limpa `st.session_state`, não apaga todos os arquivos da conta.
+
+O Neon usado para restaurar não persiste essas contas nem os CSVs. Para hospedagem com disco efêmero, exporte os dados que precisam ser preservados. Apontar `COFRYA_DATA_DIR` para outro caminho só oferece persistência se o volume da hospedagem também a oferecer.
+
+### Contrato de saída
+
+| Grupo em `resumo.csv` | Campos |
+| --- | --- |
+| Identidade | `id_tentativa`, `id_copia`, `cenario`, `semente`, `configuracao` |
+| Contexto | `versao_codigo`, `instante_inicio_utc`, `provedor_ambiente`, `sha256_referencias` |
+| Resultado | `decisao`, `motivo` |
+| Durações | `duracao_identidade_s`, `duracao_autenticacao_s`, `duracao_hash_s`, `duracao_preparacao_s`, `duracao_restauracao_s`, `duracao_validacao_s`, `duracao_limpeza_s`, `tempo_decisao_s` |
+| Recursos e repetição | `cpu_pct`, `memoria_max_mb`, `espaco_temp_mb`, `eh_repeticao_desempenho` |
+
+`evidencias.csv` usa `id_tentativa`, `teste`, `aprovado`, `valor_esperado`, `valor_observado` e `detalhe`. A relação entre os dois arquivos é feita por `id_tentativa`. A pode aprovar sem produzir evidências individuais, pois retorna logo após a existência/cópia.
+
+Valores `None` no resumo são escritos como `NA`; não significam zero. CPU, memória e espaço não são coletados pelo executor atual. O campo `provedor_ambiente` registra a configuração escolhida mesmo em A/B, que não criam banco.
+
+`postgres_app.trava_execucao()` impede verificações simultâneas dentro do mesmo processo Streamlit. `RegistradorCSV` usa `RLock` local ao processo e migra cabeçalhos compatíveis com `os.replace`. Isso não constitui transação atômica entre os dois CSVs, trava entre processos ou fila distribuída. Na interface, execução e gravação têm estados separados: o resultado pode existir mesmo se a gravação falhar.
+
+## Módulo de arquivos
+
+[`verificar_arquivo_generico()`](../src/tipos_arquivo.py) retorna `ResultadoVerificacaoArquivo`, separado de `RegistroTentativa`.
+
+| Formato | Verificação de conteúdo |
+| --- | --- |
+| CSV | Leitura, arquivo não vazio, regularidade das linhas e colunas esperadas quando informadas |
+| JSON | Parsing e chaves esperadas nos objetos avaliados |
+| SQLite | `PRAGMA integrity_check` e tabelas esperadas quando informadas |
+| PostgreSQL `.dump` | `pg_restore --list` e presença de tabelas no índice quando solicitadas |
+
+Com manifesto e chave, também verifica HMAC, tamanho/hash e idade. Sem manifesto, não estabelece integridade em relação a um original conhecido. A leitura do índice de `.dump` não restaura dados e não executa as regras da configuração C. As medições desse módulo não integram a matriz experimental PostgreSQL.
+
+## Testes e manutenção
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q tests
+```
+
+A [CI](../.github/workflows/tests.yml) usa Python 3.12, instala `requirements-dev.txt` e executa essa suíte em pushes para `main` e pull requests, com autocarregamento de plugins pytest desabilitado.
+
+| Arquivo de teste | Foco |
+| --- | --- |
+| [`test_manifest.py`](../tests/test_manifest.py) | Autenticação, campos de manifesto e integridade |
+| [`test_generator.py`](../tests/test_generator.py) | Determinismo da semente e injeção de C4 |
+| [`test_regressions.py`](../tests/test_regressions.py) | Uploads, autenticação, decisões, limpeza e CSVs |
+| [`test_neon_recovery.py`](../tests/test_neon_recovery.py) | Endpoint/banco corretos, conexão direta, prontidão SQL e tratamento de falhas |
+| [`test_experiment_inputs.py`](../tests/test_experiment_inputs.py) | IDs, rótulos, referências e pré-validação do formulário |
+| [`test_app.py`](../tests/test_app.py) | Fluxos de interface com Streamlit AppTest |
+| [`test_protocolo_final.py`](../tests/test_protocolo_final.py) | Enumeração C0–C7, catálogo e regra de seleção |
+
+A revisão 0.2.3 foi validada com 80 testes. Os testes de infraestrutura usam substitutos controlados; não demonstram nova execução de restauração no Neon. Ao modificar uma etapa, verifique a decisão e as evidências produzidas, incluindo falhas de infraestrutura e limpeza, além do caso de sucesso.
+
+## Dados experimentais
+
+A matriz abaixo é **esperada**, com chave correta, artefatos preparados, política de 30 dias e ambiente disponível:
 
 | Cenário | A | B | C_sem_func | C |
 | --- | --- | --- | --- | --- |
-| C0 | Aprovada | Aprovada | Aprovada | Aprovada |
-| C1 | Aprovada | Reprovada | Reprovada | Reprovada |
-| C2 | Aprovada | Reprovada | Reprovada | Reprovada |
-| C3 | Aprovada | Aprovada | Aprovada | Reprovada |
-| C4 | Aprovada | Aprovada | Aprovada | Reprovada |
-| C5 | Aprovada | Aprovada | Reprovada | Reprovada |
-| C6 | Aprovada | Reprovada | Reprovada | Reprovada |
-| C7 | Aprovada | Reprovada | Sem registro | Reprovada |
+| C0 — válido | Aprova | Aprova | Aprova | Aprova |
+| C1 — truncamento após assinatura | Aprova | Reprova | Reprova | Reprova |
+| C2 — byte alterado após assinatura | Aprova | Reprova | Reprova | Reprova |
+| C3 — omissão de tabela/conteúdo esperado | Aprova | Aprova | Aprova | Reprova |
+| C4 — total incorreto antes da assinatura | Aprova | Aprova | Aprova | Reprova |
+| C5 — papel necessário ausente no destino | Aprova | Aprova | Reprova | Reprova |
+| C6 — captura antiga autenticada | Aprova | Reprova | Reprova | Reprova |
+| C7 — manifesto adulterado sem HMAC válido | Aprova | Reprova | Reprova | Reprova |
 
-Fonte: resumo_sem_repeticoes.csv. Sem registro não é decisão inconclusiva.
+A [matriz observada](resultados/matriz_observada.csv) e as [métricas agregadas](resultados/metricas.json) provêm dos ensaios 0.2.2: 40 registros originais, 31 retidos, sete repetições excluídas e dois IDs incompatíveis. Foram registradas 16 aprovações, 15 reprovações e nenhuma inconclusão. **C7/C_sem_func está sem registro**; não foi preenchido com a previsão teórica. No conjunto comum C1–C6, as detecções foram A: 0/6, B: 3/6, C_sem_func: 4/6 e C: 6/6.
 
-C0 foi aprovado nas quatro configurações. Isso demonstra que o conjunto válido utilizado não foi rejeitado nas tentativas selecionadas. A evidência é restrita a esse controle: não permite estimar uma taxa geral de falsos positivos nem assegurar que qualquer outro backup válido seria aceito.
+### Reproduzir a consolidação
 
-C1 e C2 foram aprovados por A e rejeitados pelas configurações que verificam integridade. Os motivos registrados são divergência de hash ou tamanho. Não foi necessário restaurar esses arquivos para produzir a reprovação. A comparação mostra que a mera presença dos artefatos não discrimina alterações posteriores à assinatura.
+Coloque o CSV do material suplementar em `docs/resultados/resumo_original_2026-09-24.csv` e execute:
 
-C3 passou por A, B e C_sem_func, mas foi reprovado por C por falha de estrutura e conteúdo. A restauração pôde concluir porque reconstruiu os objetos presentes no arquivo, sem que isso demonstrasse a presença de tudo o que a aplicação exigia. C4 seguiu o mesmo padrão de aprovação nas etapas anteriores e reprovação funcional, com motivo de regra de negócio.
+```bash
+python scripts/consolidar_resultados.py
+```
 
-C5 foi aprovado por A e B e reprovado nas duas configurações com restauração. O resumo registra falha na restauração nativa, resultado compatível com o cenário preparado de papel ausente. Como a exportação quantitativa não contém o stderr individual desses dois ensaios, ela não permite confirmar isoladamente a mensagem SQL específica que causou a falha. A atribuição à dependência decorre do procedimento de preparação e deve ser interpretada com essa limitação documental.
+O script ordena por `instante_inicio_utc`, desempata pela linha original, verifica o ID e retém a primeira tentativa pela chave:
 
-C6 foi rejeitado em B, C_sem_func e C pela política de idade máxima. C7 foi rejeitado em B e C por autenticação do manifesto. Embora C_sem_func compartilhe a mesma etapa de autenticação e sua reprovação seja prevista, falta uma tentativa correspondente na exportação. Não se confunde essa previsão do código com observação experimental.
+```text
+cenario, semente, configuracao, id_copia, versao_codigo, provedor_ambiente
+```
 
-## 6.3 Ganho de detecção por etapa
+Decisão e duração não participam da escolha. A rotina foi escrita para este conjunto de uma semente: a matriz final indexa cenário/configuração e os cálculos pressupõem C1–C6 completos. Ela precisa ser adaptada antes de agregar múltiplas sementes ou um conjunto incompleto.
 
-A comparação completa das quatro configurações utiliza C1–C6, conjunto com seis falhas e registros em todas as configurações. A detectou 0/6, B detectou 3/6, C_sem_func detectou 4/6 e C detectou 6/6. Os percentuais correspondentes são 0%, 50%, 66,7% e 100% no conjunto controlado.
+SHA-256 do CSV original: `ccc6c9fef7fb8b6f9a394358afb47930528ae757be57e54645419abb24d40d49`. Os CSVs individuais e a auditoria são material suplementar entregue à autora, fora do versionamento público. `sem_registro` indica ausência na coleta, não uma decisão do executor.
 
-Tabela 6 – Detecção no conjunto comum C1–C6
+### Limites de interpretação
 
-| Configuração | Falhas detectadas | Falhas observadas | Proporção |
-| --- | --- | --- | --- |
-| A | 0 | 6 | 0% |
-| B | 3 | 6 | 50,0% |
-| C_sem_func | 4 | 6 | 66,7% |
-| C | 6 | 6 | 100,0% |
+- Uma semente, mil pedidos e uma observação selecionada por combinação; o controle C0 não permite estimar taxa de falsos positivos.
+- Oito tentativas chegaram à restauração, em sequência, sem repetição controlada nem ordem randomizada. Os tempos são descritivos; não isolam custo marginal de validação, rede ou provedor.
+- Em C5 houve reprovação na restauração do cenário preparado com papel ausente. O CSV quantitativo não traz o stderr individual necessário para confirmar isoladamente a mensagem SQL específica.
+- Os limites funcionais são os das consultas implementadas. Aprovação não certifica segurança nem recuperabilidade universal.
 
-Fonte: elaboração própria a partir dos registros selecionados.
+## Diagnóstico
 
-O acréscimo de restauração à configuração B produziu a detecção adicional de C5. O acréscimo de validação funcional à configuração C_sem_func produziu duas detecções adicionais, C3 e C4, diferença de 33,3 pontos percentuais no conjunto comum. Essa diferença é uma contagem descritiva de cenários preparados, não uma estimativa de ganho em produção.
+| Sintoma | O que verificar |
+| --- | --- |
+| HMAC não confere | Correspondência entre chave, manifesto e cópia; não reassinar uma falha deliberada para fazê-la passar |
+| Referências ausentes ou inválidas | JSON com os cinco inteiros esperados; na interface C o arquivo é obrigatório antes da execução |
+| Cliente PostgreSQL ausente | `pg_restore --version`, `pg_dump --version` e `psql --version` no host Python |
+| Versão de dump incompatível | Compatibilidade entre o formato do dump e o cliente realmente instalado |
+| Neon não fica pronto | Credenciais, projeto, papel `neondb_owner`, endpoint direto, banco criado e conectividade SQL |
+| C5 aprova inesperadamente | Papel herdado no branch pai ou criado via `--dependencias` |
+| C3 reprova por contagem, mas não por estrutura | O gerador atual preserva DDL e remove inserções; confira a preparação do artefato |
+| Resultado executado, mas não salvo | Permissões/cabeçalhos dos CSVs; a interface informa falha de persistência separadamente |
+| Limpeza pendente | Identificador do branch/contêiner nas evidências; confira o recurso no provedor |
 
-Considerando também C7 onde há observação, B rejeitou quatro das sete falhas e C rejeitou as sete. C_sem_func possui quatro rejeições entre seis falhas observadas, com C7 ausente. Comparar esses denominadores distintos sem explicitar a falta de registro produziria uma conclusão incompleta. Por esse motivo, o argumento principal utiliza o conjunto comum.
+## Referências de implementação
 
-O resultado mais relevante é qualitativo e causalmente delimitado pelo desenho dos artefatos: a assinatura de uma exportação incompleta ou de dados inconsistentes pode ser válida. A restauração sem erro também pode reconstruir fielmente esse estado inadequado. A validação funcional acrescenta um critério sobre o uso dos dados, além de sua preservação e reconstrução.
+- [PostgreSQL — pg_restore](https://www.postgresql.org/docs/17/app-pgrestore.html)
+- [Python — hmac](https://docs.python.org/3/library/hmac.html)
+- [Neon — branches](https://neon.com/docs/introduction/branching)
+- [Neon — criação de branch](https://api-docs.neon.tech/reference/createprojectbranch)
+- [Neon — connection URI](https://api-docs.neon.tech/reference/getconnectionuri)
+- [Streamlit — secrets](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management)
 
-## 6.4 Tempos registrados
-
-As configurações A e B concluíram suas tentativas em menos de 0,009 segundo no conjunto retido. Valores tão curtos descrevem verificações locais de arquivos pequenos e não constituem garantia de latência para backups maiores. As tentativas de C_sem_func e C rejeitadas antes da restauração também permaneceram na faixa de milissegundos, pois não criaram o ambiente remoto.
-
-Oito tentativas chegaram à restauração: C0, C3, C4 e C5, em C_sem_func e C. Seus tempos de restauração variaram entre 256,970 e 335,021 segundos. Na configuração C, apenas C0, C3 e C4 alcançaram a validação funcional, com duração entre 3,944 e 3,974 segundos. Em C5, a falha de restauração impediu essa etapa.
-
-Tabela 7 – Durações das tentativas que chegaram à restauração, em segundos
-
-| Cenário | Configuração | Preparação | Restauração | Validação | Total |
-| --- | --- | --- | --- | --- | --- |
-| C0 | C_sem_func | 6,184 | 335,021 | NA | 341,560 |
-| C0 | C | 6,454 | 314,805 | 3,974 | 325,603 |
-| C3 | C_sem_func | 6,379 | 257,531 | NA | 264,256 |
-| C3 | C | 6,106 | 256,970 | 3,962 | 267,366 |
-| C4 | C_sem_func | 5,907 | 318,582 | NA | 324,842 |
-| C4 | C | 6,198 | 319,872 | 3,944 | 330,333 |
-| C5 | C_sem_func | 3,808 | 313,874 | NA | 317,963 |
-| C5 | C | 6,096 | 311,614 | NA | 318,082 |
-
-Fonte: resumo_sem_repeticoes.csv. Total inclui verificações iniciais e limpeza; NA indica etapa não executada.
-
-A duração total não deve ser obtida apenas somando as três etapas exibidas na tabela, pois inclui verificações iniciais, limpeza e orquestração. A limpeza dos oito ensaios com restauração ficou entre aproximadamente 0,274 e 0,365 segundo. CPU, memória máxima e espaço temporário estão ausentes em todos os registros e não permitem comparação de consumo.
-
-Em C0, o total de C foi menor que o de C_sem_func, apesar de C executar mais verificações. Essa diferença decorre dos tempos observados em execuções distintas, sobretudo da duração da restauração. Ela não demonstra que acrescentar validação acelere a recuperação. Sem repetições controladas e ordem randomizada, não é possível separar o custo marginal da validação da variabilidade de rede, inicialização e serviço remoto.
-
-Os artefatos utilizados carregam dados por instruções INSERT. A implementação não realizou um ensaio comparativo de INSERT versus COPY, nem variou paralelismo e região. Portanto, a hipótese de influência do padrão de carga e da rede sobre os tempos é plausível, mas não foi isolada experimentalmente. O resultado defensável é a duração observada de cada etapa, nas condições efetivamente utilizadas.
-
-## 6.5 Evidência ilustrativa de C4
-
-A tentativa b539e298-e492-4af3-af8c-e8c7e8d36669, preservada na amostra, registra C4 na configuração C. A captura mostra autenticação, política temporal, identificador, hash, preparação do Neon e restauração aprovados. A decisão final, entretanto, é reprovação por regra de negócio.
-
-Figura 5 – C4 restaurado sem erro e reprovado pela validação funcional
-
-![Reprovação funcional de C4](imagens/cofrya-falha-funcional-c4.png)
-
-Fonte: captura da aplicação fornecida pela autora, 23 set. 2026; tentativa identificada no CSV consolidado.
-
-A figura é utilizada como evidência ilustrativa de um fluxo específico. A tabela exibida na tela é parcial e não substitui o conjunto de registros. Para apresentação acadêmica, foram selecionadas imagens sem chaves visíveis, acompanhadas de legenda e fonte. Não foram utilizados os contadores de históricos com repetições como base para as métricas do TCC.
-
-O módulo complementar de arquivos também consegue aprovar a leitura do índice desse dump e sua integridade em relação ao manifesto. Não há contradição: essa ferramenta verifica um subconjunto de propriedades. A diferença entre leitura do índice e validação funcional foi mantida visível na interface justamente para evitar que uma aprovação parcial seja interpretada como recuperabilidade completa.
-
-## 6.6 Limitações e ameaças à validade
-
-A validade interna é limitada pela execução sequencial, por uma única semente e pela ausência de repetição analítica. A infraestrutura remota pode variar entre tentativas. A remoção de repetições atendeu ao recorte solicitado e evitou contar a mesma combinação várias vezes, mas também significa que não há amostra temporal suficiente para caracterizar dispersão e estabilidade.
-
-O controle C0 possui apenas uma observação por configuração, insuficiente para estimar uma taxa de falsos positivos. Da mesma forma, as oito tentativas que alcançaram a restauração foram executadas sequencialmente, sem repetição controlada nem ordem randomizada; por isso, as diferenças de tempo entre configurações — inclusive o total menor observado em C0/C em relação a C0/C_sem_func — são descritivas das condições em que ocorreram, e não isolam o custo marginal de cada etapa da variabilidade de rede e do provedor remoto.
-
-A validade de construção depende dos critérios implementados. Contagens iguais não garantem igualdade de todos os registros; tabelas presentes não garantem um esquema integralmente correto; e totalização consistente não demonstra correção de todas as regras de negócio. A hipótese é sustentada para as falhas preparadas, não para todas as formas possíveis de corrupção lógica.
-
-A validade externa é restrita à base sintética de mil pedidos, aos dumps utilizados e à hospedagem observada. Não foram avaliados grandes volumes, múltiplas sementes, bancos com extensões diferentes, cargas concorrentes ou incidentes reais. Também não houve medição independente da configuração física do provedor, nem registro completo das versões de cliente e servidor em cada linha exportada. O campo de versão do código não substitui esses metadados de ambiente.
-
-A completude documental possui duas limitações adicionais: falta C7/C_sem_func e a fonte quantitativa não contém todas as evidências individuais exportadas. Por isso, a correspondência entre decisão e cenário é apresentada com o motivo disponível no resumo, sem reconstruir mensagens SQL não fornecidas. Os arquivos brutos e a auditoria permitem verificar o que foi efetivamente selecionado.
-
-No modelo de confiança, a chave HMAC, as referências e o executor são confiáveis. Comprometer a chave ou fornecer referências falsas pode invalidar a interpretação das verificações. O ambiente temporário não é uma sandbox para código SQL hostil, e os dados do protótipo podem desaparecer do disco local da hospedagem. Esses limites impedem apresentar o produto como solução pronta para produção crítica, certificação de segurança ou garantia universal de recuperação.
-
-# 7 CONSIDERAÇÕES FINAIS
-
-O trabalho entregou o Cofrya como protótipo funcional de verificação progressiva de backups lógicos PostgreSQL, acessível por navegador e integrado ao Neon para restaurações temporárias. A arquitetura implementada reúne autenticação do manifesto, integridade, restauração e validação funcional, com histórico e exportação de evidências. O módulo complementar amplia o uso para arquivos de dados, mantendo explícita a diferença entre leitura e recuperação.
-
-Os resultados respondem à pergunta de pesquisa no recorte observado. A verificação de existência não detectou as falhas preparadas. A autenticação, a política temporal e a integridade rejeitaram alterações posteriores, captura antiga e manifesto adulterado. Houve reprovação na restauração do cenário preparado com papel ausente, sem confirmação da mensagem SQL específica na fonte quantitativa disponível. A validação funcional acrescentou a detecção de tabela omitida e totalização incorreta, mesmo quando o arquivo era autêntico e a restauração terminava sem erro.
-
-No conjunto comum C1–C6, a detecção passou de 3/6 em B para 4/6 em C_sem_func e 6/6 em C. Os três ensaios que alcançaram a etapa funcional registraram aproximadamente quatro segundos nessa validação, enquanto a restauração concentrou a maior parte do tempo. Não se conclui, porém, que esse seja um custo fixo ou generalizável: a coleta não isolou variabilidade de infraestrutura nem mediu consumo de recursos.
-
-A análise preservou 31 tentativas válidas, sem contar repetições e sem preencher a combinação ausente com um resultado teórico. Essa distinção entre previsão, execução e evidência é parte do resultado metodológico. A conclusão central é que verificar um backup exige definir quais propriedades se pretende demonstrar; existência, integridade e restauração são necessárias em diferentes níveis, mas não substituem critérios de correção dos dados recuperados.
-
-Como trabalhos futuros, propõem-se completar a combinação sem registro, ampliar volumes e sementes, randomizar a ordem de execução e realizar repetições específicas de desempenho. Também são pertinentes registrar versões efetivas do ambiente, instrumentar CPU e memória, verificar persistência de resultados em armazenamento externo, ampliar o oráculo funcional e avaliar políticas de autenticação e autorização adequadas à produção. Essas ampliações devem conservar o princípio de que uma aprovação informa apenas as verificações realmente executadas.
-
-# REFERÊNCIAS
-
-AMAZON WEB SERVICES. Restore testing. AWS Backup Developer Guide. [s.d.]. Disponível em: https://docs.aws.amazon.com/aws-backup/latest/devguide/restore-testing.html. Acesso em: 24 set. 2026.
-
-AUTORIDADE NACIONAL DE PROTEÇÃO DE DADOS (ANPD). Guia orientativo sobre segurança da informação para agentes de tratamento de pequeno porte. Brasília: ANPD, 2021. Disponível em: https://www.gov.br/anpd/pt-br/centrais-de-conteudo/materiais-educativos-e-publicacoes/guia-orientativo-sobre-seguranca-da-informacao-para-agentes-de-tratamento-de-pequeno-porte. Acesso em: 24 set. 2026.
-
-GUILHERME, Ana Luiza. Cofrya: validação e recuperação de backups. Código-fonte e dados experimentais. 2026. Disponível em: https://github.com/AnaLuizaGuilherme/Cofrya-Validacao-e-recuperacao-de-backups. Aplicação: https://cofrya.streamlit.app. Acesso em: 24 set. 2026.
-
-MOHAN, Jayashree; MARTINEZ, Ashlie; PONNAPALLI, Soujanya; RAJU, Pandian; CHIDAMBARAM, Vijay. Finding Crash-Consistency Bugs with Bounded Black-Box Crash Testing. In: USENIX SYMPOSIUM ON OPERATING SYSTEMS DESIGN AND IMPLEMENTATION, 13., 2018. Proceedings [...]. USENIX Association, 2018. p. 33–50. Disponível em: https://www.usenix.org/conference/osdi18/presentation/mohan. Acesso em: 24 set. 2026.
-
-NEON. Branching. Neon Docs. [s.d.]a. Disponível em: https://neon.com/docs/introduction/branching. Acesso em: 24 set. 2026.
-
-NEON. Create branch. Neon API Reference. [s.d.]b. Disponível em: https://api-docs.neon.tech/reference/createprojectbranch. Acesso em: 24 set. 2026.
-
-NEON. Retrieve connection URI. Neon API Reference. [s.d.]c. Disponível em: https://api-docs.neon.tech/reference/getconnectionuri. Acesso em: 24 set. 2026.
-
-PILLAI, Thanumalayan Sankaranarayana et al. All File Systems Are Not Created Equal: On the Complexity of Crafting Crash-Consistent Applications. In: USENIX SYMPOSIUM ON OPERATING SYSTEMS DESIGN AND IMPLEMENTATION, 11., 2014. Proceedings [...]. USENIX Association, 2014. p. 433–448. Disponível em: https://www.usenix.org/conference/osdi14/technical-sessions/presentation/pillai. Acesso em: 24 set. 2026.
-
-POSTGRESQL GLOBAL DEVELOPMENT GROUP. pg_verifybackup. PostgreSQL 17 Documentation. [s.d.]a. Disponível em: https://www.postgresql.org/docs/17/app-pgverifybackup.html. Acesso em: 24 set. 2026.
-
-POSTGRESQL GLOBAL DEVELOPMENT GROUP. pg_restore. PostgreSQL 17 Documentation. [s.d.]b. Disponível em: https://www.postgresql.org/docs/17/app-pgrestore.html. Acesso em: 24 set. 2026.
-
-PYTHON SOFTWARE FOUNDATION. hmac: Keyed-Hashing for Message Authentication. Python Documentation. [s.d.]. Disponível em: https://docs.python.org/3/library/hmac.html. Acesso em: 24 set. 2026.
-
-RESTIC. Working with repositories. Restic Documentation. [s.d.]. Disponível em: https://restic.readthedocs.io/en/stable/045_working_with_repos.html. Acesso em: 24 set. 2026.
-
-SARABI, Armin; HUANG, Ziyuan; WANG, Chenlan; KARIR, Tai; LIU, Mingyan. The Ransomware Decade: The Creation of a Fine-Grained Dataset and a Longitudinal Study. In: USENIX SECURITY SYMPOSIUM, 34., 2025. Proceedings [...]. USENIX Association, 2025. p. 4799–4818. Disponível em: https://www.usenix.org/conference/usenixsecurity25/presentation/sarabi. Acesso em: 24 set. 2026.
-
-STEFANOV, Emil; VAN DIJK, Marten; OPREA, Alina; JUELS, Ari. Iris: A Scalable Cloud File System with Efficient Integrity Checks. In: ANNUAL COMPUTER SECURITY APPLICATIONS CONFERENCE, 2012. Proceedings [...]. ACM, 2012. p. 229–238. Versão dos autores disponível em: https://eprint.iacr.org/2011/585. Acesso em: 24 set. 2026.
-
-STREAMLIT. Connecting to data. Streamlit Docs. [s.d.]a. Disponível em: https://docs.streamlit.io/develop/concepts/connections/connecting-to-data. Acesso em: 24 set. 2026.
-
-STREAMLIT. Secrets management for your Community Cloud app. Streamlit Docs. [s.d.]b. Disponível em: https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management. Acesso em: 24 set. 2026.
-
-SWANSON, Marianne et al. Contingency Planning Guide for Federal Information Systems. NIST Special Publication 800-34, Revision 1. Gaithersburg: NIST, 2010. DOI: 10.6028/NIST.SP.800-34r1. Disponível em: https://csrc.nist.gov/pubs/sp/800/34/r1/upd1/final. Acesso em: 24 set. 2026.
-
-# GLOSSÁRIO
-
-Autenticidade — Propriedade verificada, neste trabalho, pela autenticação do manifesto com uma chave HMAC confiável. Não demonstra, isoladamente, a correção dos dados do backup.
-
-Backup lógico — Cópia que representa objetos e dados de um banco em um formato que permite sua reconstrução por ferramentas do sistema gerenciador.
-
-Branch — Ramificação de um projeto Neon, utilizada pelo Cofrya para disponibilizar um ambiente temporário de restauração e verificação.
-
-Cenário — Condição experimental preparada para avaliar o comportamento das configurações. C0 é o controle válido; C1–C7 representam as falhas definidas no protocolo.
-
-Configuração — Conjunto de etapas habilitadas em uma tentativa. No Cofrya, A, B, C_sem_func e C permitem comparar níveis progressivos de verificação.
-
-Dump — Arquivo de backup lógico PostgreSQL. O trabalho utiliza arquivos com extensão .dump como entrada para as verificações e a restauração.
-
-Falso positivo — No contexto de detecção de falhas, reprovação de um backup válido. A ausência desse resultado nas observações de C0 não permite estimar uma taxa geral.
-
-Hash — Resumo calculado a partir dos bytes de um arquivo. Sua comparação com uma referência permite verificar integridade, mas não demonstra correção funcional.
-
-HMAC — Código de autenticação de mensagem calculado com uma chave secreta e uma função hash. No Cofrya, autentica o manifesto usando SHA-256.
-
-Integridade — Correspondência entre os bytes do arquivo avaliado e a referência registrada no manifesto autenticado. Um arquivo íntegro pode conter dados logicamente incorretos.
-
-Manifesto — Arquivo de metadados associado ao backup, com informações usadas nas verificações de identidade, atualidade, tamanho e hash, além de autenticação por HMAC.
-
-Neon — Serviço de PostgreSQL em nuvem utilizado no protótipo para disponibilizar o ambiente temporário das restaurações.
-
-Oráculo funcional — Conjunto de critérios e referências confiáveis que define os resultados esperados para verificar os dados recuperados.
-
-pg_dump — Utilitário PostgreSQL empregado na geração de backups lógicos.
-
-pg_restore — Utilitário PostgreSQL empregado para restaurar arquivos de backup em formatos compatíveis e consultar seu índice. Ler o índice não equivale a restaurar os dados.
-
-PostgreSQL — Sistema gerenciador de banco de dados utilizado na base sintética e nos ensaios de restauração do Cofrya.
-
-Recuperabilidade — Capacidade de reconstruir dados a partir de um backup. Sua demonstração neste trabalho está limitada à restauração e aos critérios de validação efetivamente executados.
-
-Referências esperadas — Informações obtidas do estado de referência antes da inserção das falhas e usadas como base para a validação funcional.
-
-Restauração — Processo de reconstrução dos objetos e dados do backup em um banco de destino. Sua conclusão sem erro não comprova todas as propriedades funcionais.
-
-Semente — Valor usado para inicializar a geração pseudoaleatória dos dados sintéticos e permitir a reprodução da base nas mesmas condições de geração.
-
-SHA-256 — Função hash criptográfica que produz um resumo de 256 bits. É utilizada na conferência dos arquivos e na autenticação HMAC do manifesto.
-
-Streamlit — Framework Python utilizado para a interface web do Cofrya, incluindo entrada de arquivos, execução das verificações e consulta de resultados.
-
-UTC — Tempo Universal Coordenado, referência temporal utilizada nos registros de início das tentativas analisadas.
-
-Validação funcional — Verificação de propriedades dos dados após a restauração. No Cofrya, inclui presença de tabelas, contagens e consistência dos totais de pedidos.
-
-# APÊNDICE A – RASTREABILIDADE DA CONSOLIDAÇÃO
-
-O arquivo original foi preservado sem modificação de bytes. Seu SHA-256 é ccc6c9fef7fb8b6f9a394358afb47930528ae757be57e54645419abb24d40d49. Para reproduzir a análise, coloque esse CSV do material suplementar em docs/resultados e execute python scripts/consolidar_resultados.py na raiz do repositório, usando a biblioteca padrão Python.
-
-A numeração a seguir se refere às linhas de dados, sem contar o cabeçalho. Foram mantidas as linhas 1–4, 6–21 e 30–40. As linhas 5, 22 e 25–29 são repetições. As linhas 23 e 24 registram id_copia igual a Oii, valor incompatível com a convenção de identificação dos artefatos. A auditoria inclui os UUIDs completos e informa, para cada repetição, qual tentativa foi preservada.
-
-Tabela 8 – Exclusões e tentativa preservada
-
-| Linha excluída | Cenário/configuração | Motivo | Linha preservada |
-| --- | --- | --- | --- |
-| 5 | C0 / C_sem_func | Repetição | 3 |
-| 22 | C4 / A | Repetição | 18 |
-| 23 | C1 / A | ID Oii incompatível | Não aplicável |
-| 24 | C1 / B | ID Oii incompatível | Não aplicável |
-| 25 | C1 / B | Repetição | 7 |
-| 26 | C1 / C_sem_func | Repetição | 8 |
-| 27 | C1 / C | Repetição | 9 |
-| 28 | C0 / B | Repetição | 2 |
-| 29 | C0 / C_sem_func | Repetição | 3 |
-
-Fonte: auditoria_selecao.csv.
-
-O repositório publica matriz_observada.csv e metricas.json em docs/resultados. O material suplementar contém também resumo_original_2026-09-24.csv, resumo_sem_repeticoes.csv e auditoria_selecao.csv, com os registros detalhados. A identificação de uma repetição não depende do campo eh_repeticao_desempenho; utiliza a chave experimental e o instante registrado. A célula C7/C_sem_func permanece sem registro em todos os produtos derivados.
-
-# APÊNDICE B – ROTEIRO DE REPRODUÇÃO DO FLUXO
-
-A reprodução exige Python, dependências do repositório, cliente PostgreSQL compatível e credenciais Neon configuradas fora do código. Na implantação Streamlit, o arquivo principal é streamlit_app.py. TCC_HMAC_KEY, NEON_API_KEY e NEON_PROJECT_ID são fornecidos pelos segredos da aplicação. As contas são criadas na interface; a chave HMAC do laboratório não é a senha de login nem a senha do banco.
-
-Para cada cenário, devem ser selecionados dump, manifesto e referências correspondentes. O campo Semente precisa corresponder ao gerador e ao nome do artefato. O cenário escolhido é um rótulo experimental; seus arquivos devem ter sido preparados previamente. A configuração A verifica existência; B acrescenta autenticação e integridade; C_sem_func acrescenta restauração; C exige também referências válidas.
-
-No cenário C5, o papel requerido deve estar ausente e o campo de papéis a preparar deve ficar vazio. Criar o papel permite um controle positivo adicional, mas esse controle não deve receber o mesmo significado do ensaio negativo. Para C6, mantenha a política de 30 dias e a data antiga assinada; assinar novamente com data atual elimina a condição temporal. Para C7, não gere um novo HMAC válido sobre os arquivos adulterados.
-
-Após executar, registre decisão, motivo e evidências; baixe os CSVs antes de reiniciar ou reimplantar a hospedagem. Confira no Neon a remoção dos branches temporários e preserve os artefatos originais. Uma execução futura deve registrar sua própria versão e seus próprios tempos. Ela não deve ser incorporada retroativamente à coleta descrita como se tivesse ocorrido nas mesmas condições.
+Os links complementam a leitura; os contratos e comportamentos documentados acima correspondem aos arquivos deste repositório.
