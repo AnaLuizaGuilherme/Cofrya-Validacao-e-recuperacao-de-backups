@@ -4,6 +4,8 @@
 
 Ana Luiza Guilherme
 
+Mogi das Cruzes-SP
+
 2026
 
 # RESUMO
@@ -17,6 +19,25 @@ Palavras-chave: cópias de segurança; PostgreSQL; recuperabilidade; validação
 The existence of a backup does not, by itself, demonstrate that it can recover correct data. This study developed and evaluated Cofrya, a Python and Streamlit prototype for verifying PostgreSQL logical backups. The solution combines HMAC-SHA-256 authenticated manifests, integrity checks, temporary restoration on Neon, and validation of table presence, record counts, and order totals. Four configurations were compared: A checks file existence; B adds authentication, age policy, and integrity; C_sem_func adds restoration; and C adds functional validation. The protocol covers scenarios C0–C7, prepared with a synthetic database of one thousand orders and seed 1. After auditable exclusion of repeated attempts and records with incompatible identifiers, 31 attempts were analyzed. The combination C7/C_sem_func was not recorded. In the common set of faulty scenarios C1–C6, A detected zero out of six faults, B detected three, C_sem_func detected four, and C detected all six. Configuration C detected an omitted table and inconsistent order totals despite successful authentication and restoration. Execution times were analyzed descriptively, without estimating performance stability. These observations support checking recovered data in addition to restoring it within the scope examined. The study is exploratory: one seed, one data volume, and one selected execution per combination do not establish general detection rates. The application, source code, results matrix, and aggregate metrics are publicly available on Streamlit and GitHub. The complete records and selection audit accompany the thesis as supplementary material delivered to the author.
 
 Keywords: backups; PostgreSQL; recoverability; functional validation; Streamlit; Neon.
+
+# LISTA DE FIGURAS
+
+- Figura 1 – Arquitetura da execução hospedada
+- Figura 2 – Tela de acesso à aplicação
+- Figura 3 – Preparação de uma tentativa C4 na configuração C
+- Figura 4 – Verificação de índice e aviso sobre o limite da análise
+- Figura 5 – C4 restaurado sem erro e reprovado pela validação funcional
+
+# LISTA DE TABELAS
+
+- Tabela 1 – Composição da base de referência
+- Tabela 2 – Etapas habilitadas por configuração
+- Tabela 3 – Matriz de decisões esperadas
+- Tabela 4 – Composição da amostra analítica
+- Tabela 5 – Decisões observadas sem repetições
+- Tabela 6 – Detecção no conjunto comum C1–C6
+- Tabela 7 – Durações das tentativas que chegaram à restauração, em segundos
+- Tabela 8 – Exclusões e tentativa preservada
 
 # 1 INTRODUÇÃO
 
@@ -425,6 +446,8 @@ O módulo complementar de arquivos também consegue aprovar a leitura do índice
 
 A validade interna é limitada pela execução sequencial, por uma única semente e pela ausência de repetição analítica. A infraestrutura remota pode variar entre tentativas. A remoção de repetições atendeu ao recorte solicitado e evitou contar a mesma combinação várias vezes, mas também significa que não há amostra temporal suficiente para caracterizar dispersão e estabilidade.
 
+O controle C0 possui apenas uma observação por configuração, insuficiente para estimar uma taxa de falsos positivos. Da mesma forma, as oito tentativas que alcançaram a restauração foram executadas sequencialmente, sem repetição controlada nem ordem randomizada; por isso, as diferenças de tempo entre configurações — inclusive o total menor observado em C0/C em relação a C0/C_sem_func — são descritivas das condições em que ocorreram, e não isolam o custo marginal de cada etapa da variabilidade de rede e do provedor remoto.
+
 A validade de construção depende dos critérios implementados. Contagens iguais não garantem igualdade de todos os registros; tabelas presentes não garantem um esquema integralmente correto; e totalização consistente não demonstra correção de todas as regras de negócio. A hipótese é sustentada para as falhas preparadas, não para todas as formas possíveis de corrupção lógica.
 
 A validade externa é restrita à base sintética de mil pedidos, aos dumps utilizados e à hospedagem observada. Não foram avaliados grandes volumes, múltiplas sementes, bancos com extensões diferentes, cargas concorrentes ou incidentes reais. Também não houve medição independente da configuração física do provedor, nem registro completo das versões de cliente e servidor em cada linha exportada. O campo de versão do código não substitui esses metadados de ambiente.
@@ -480,6 +503,56 @@ STREAMLIT. Connecting to data. Streamlit Docs. [s.d.]a. Disponível em: https://
 STREAMLIT. Secrets management for your Community Cloud app. Streamlit Docs. [s.d.]b. Disponível em: https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management. Acesso em: 24 set. 2026.
 
 SWANSON, Marianne et al. Contingency Planning Guide for Federal Information Systems. NIST Special Publication 800-34, Revision 1. Gaithersburg: NIST, 2010. DOI: 10.6028/NIST.SP.800-34r1. Disponível em: https://csrc.nist.gov/pubs/sp/800/34/r1/upd1/final. Acesso em: 24 set. 2026.
+
+# GLOSSÁRIO
+
+Autenticidade — Propriedade verificada, neste trabalho, pela autenticação do manifesto com uma chave HMAC confiável. Não demonstra, isoladamente, a correção dos dados do backup.
+
+Backup lógico — Cópia que representa objetos e dados de um banco em um formato que permite sua reconstrução por ferramentas do sistema gerenciador.
+
+Branch — Ramificação de um projeto Neon, utilizada pelo Cofrya para disponibilizar um ambiente temporário de restauração e verificação.
+
+Cenário — Condição experimental preparada para avaliar o comportamento das configurações. C0 é o controle válido; C1–C7 representam as falhas definidas no protocolo.
+
+Configuração — Conjunto de etapas habilitadas em uma tentativa. No Cofrya, A, B, C_sem_func e C permitem comparar níveis progressivos de verificação.
+
+Dump — Arquivo de backup lógico PostgreSQL. O trabalho utiliza arquivos com extensão .dump como entrada para as verificações e a restauração.
+
+Falso positivo — No contexto de detecção de falhas, reprovação de um backup válido. A ausência desse resultado nas observações de C0 não permite estimar uma taxa geral.
+
+Hash — Resumo calculado a partir dos bytes de um arquivo. Sua comparação com uma referência permite verificar integridade, mas não demonstra correção funcional.
+
+HMAC — Código de autenticação de mensagem calculado com uma chave secreta e uma função hash. No Cofrya, autentica o manifesto usando SHA-256.
+
+Integridade — Correspondência entre os bytes do arquivo avaliado e a referência registrada no manifesto autenticado. Um arquivo íntegro pode conter dados logicamente incorretos.
+
+Manifesto — Arquivo de metadados associado ao backup, com informações usadas nas verificações de identidade, atualidade, tamanho e hash, além de autenticação por HMAC.
+
+Neon — Serviço de PostgreSQL em nuvem utilizado no protótipo para disponibilizar o ambiente temporário das restaurações.
+
+Oráculo funcional — Conjunto de critérios e referências confiáveis que define os resultados esperados para verificar os dados recuperados.
+
+pg_dump — Utilitário PostgreSQL empregado na geração de backups lógicos.
+
+pg_restore — Utilitário PostgreSQL empregado para restaurar arquivos de backup em formatos compatíveis e consultar seu índice. Ler o índice não equivale a restaurar os dados.
+
+PostgreSQL — Sistema gerenciador de banco de dados utilizado na base sintética e nos ensaios de restauração do Cofrya.
+
+Recuperabilidade — Capacidade de reconstruir dados a partir de um backup. Sua demonstração neste trabalho está limitada à restauração e aos critérios de validação efetivamente executados.
+
+Referências esperadas — Informações obtidas do estado de referência antes da inserção das falhas e usadas como base para a validação funcional.
+
+Restauração — Processo de reconstrução dos objetos e dados do backup em um banco de destino. Sua conclusão sem erro não comprova todas as propriedades funcionais.
+
+Semente — Valor usado para inicializar a geração pseudoaleatória dos dados sintéticos e permitir a reprodução da base nas mesmas condições de geração.
+
+SHA-256 — Função hash criptográfica que produz um resumo de 256 bits. É utilizada na conferência dos arquivos e na autenticação HMAC do manifesto.
+
+Streamlit — Framework Python utilizado para a interface web do Cofrya, incluindo entrada de arquivos, execução das verificações e consulta de resultados.
+
+UTC — Tempo Universal Coordenado, referência temporal utilizada nos registros de início das tentativas analisadas.
+
+Validação funcional — Verificação de propriedades dos dados após a restauração. No Cofrya, inclui presença de tabelas, contagens e consistência dos totais de pedidos.
 
 # APÊNDICE A – RASTREABILIDADE DA CONSOLIDAÇÃO
 
