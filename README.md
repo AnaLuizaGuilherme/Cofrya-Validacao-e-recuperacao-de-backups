@@ -79,6 +79,18 @@ Para C no Neon, configure as credenciais, forneça as referências e use `--conf
 
 Sem `--dsn-origem`, `gerar-base` produz SQL e um placeholder, **não um dump restaurável**. A geração com DSN popula o banco indicado e requer uma base vazia de laboratório. Selecionar o cenário na verificação apenas rotula a tentativa; não injeta falhas. O guia distingue o protocolo experimental do comportamento atual dos geradores C3 e C7.
 
+## Pacote completo de cenários C0–C7
+
+[Baixar Cofrya_Cenarios_C0_C7.zip](tests/fixtures/Cofrya_Cenarios_C0_C7.zip?raw=true)
+
+Um único ZIP com **24 arquivos de entrada** (dump, manifesto e referências por cenário), instruções para o Streamlit, matriz esperada das **32 combinações** entre C0–C7 e A/B/C_sem_func/C, proveniência e inventário SHA-256. Extraia o arquivo e envie os três arquivos da mesma pasta em **Backups PostgreSQL**. Use semente 1, idade máxima de 30 dias e a chave de laboratório configurada fora do repositório.
+
+Os artefatos são os pacotes históricos de 23–24/09/2026, preservados sem alteração. Após 30 dias, a idade pode mudar o resultado dos cenários que deveriam passar nessa etapa. C5 exige que `papel_leitura_restrita` esteja ausente no destino. Consulte o `README.md` interno antes dos ensaios.
+
+A matriz do ZIP descreve expectativas; a unificação não representa uma nova execução experimental. **C7/C_sem_func permanece sem registro na coleta do TCC.**
+
+SHA-256 do ZIP: `965606bffbc92c212487d2b087d91df54280bd5883d98510b72432f31ab926af`.
+
 ## Organização do código
 
 | Arquivo ou diretório | Responsabilidade |
