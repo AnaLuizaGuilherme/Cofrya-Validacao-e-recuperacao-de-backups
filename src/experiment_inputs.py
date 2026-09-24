@@ -3,6 +3,7 @@ import json
 import re
 
 from .safe_files import validar_id
+from .scenarios import Cenario
 
 
 def id_do_backup_enviado(nome: str) -> str:
@@ -13,10 +14,12 @@ def id_do_backup_enviado(nome: str) -> str:
 
 def validar_rotulo_da_copia(copia_id: str, cenario: str, semente: int) -> None:
     """Confere apenas a convenção dos arquivos do laboratório, não seu conteúdo."""
-    nome = re.fullmatch(r'pedidos_seed(\d+)_c([0-8])', copia_id, re.IGNORECASE)
+    Cenario(cenario)
+    nome = re.fullmatch(r'pedidos_seed(\d+)_c(\d+)', copia_id, re.IGNORECASE)
     if nome is None:
         return
     esperado = f'C{nome.group(2)}'
+    Cenario(esperado)
     if cenario != esperado:
         raise ValueError(
             f'O ID {copia_id} identifica {esperado}, mas o cenário selecionado é {cenario}. '

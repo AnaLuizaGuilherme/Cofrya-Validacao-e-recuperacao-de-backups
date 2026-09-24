@@ -4,7 +4,7 @@ App unificado com login simples (usuário/senha, sem e-mail/Google) que
 reúne as duas ferramentas do projeto:
 
   - Backups PostgreSQL: streamlit_app.renderizar_pagina — restauração
-    completa via Docker ou Neon, cenários C0-C8, configurações A/B/C.
+    completa via Docker ou Neon, cenários C0-C7, configurações A/B/C.
   - Arquivos genéricos: arquivos_app.pagina_proteger/pagina_verificar —
     CSV, JSON, SQLite e o índice de backups .dump, sem precisar de
     restauração completa.

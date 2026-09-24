@@ -179,7 +179,7 @@ def test_imports_do_diretorio_compatibilidade():
     raiz=Path(__file__).resolve().parents[1]
     proc=subprocess.run([sys.executable,'-c','import src.executor, src.results, src.auth; print(src.executor.VERSAO_CODIGO)'],cwd=raiz/'verificador_backups',capture_output=True,text=True)
     assert proc.returncode==0,proc.stderr
-    assert proc.stdout.strip()=='0.2.2'
+    assert proc.stdout.strip()=='0.2.3'
 
 
 @pytest.mark.parametrize('configuracao', [executor.Configuracao.C_SEM_FUNC, executor.Configuracao.C])

@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
+from src.scenarios import Cenario
 from src.executor import (
     Configuracao, ConfiguracaoExecucao, EntradaCatalogo,
     PoliticaTemporal, executar_tentativa,
@@ -279,7 +280,7 @@ def renderizar_pagina(repositorio: Path, saida: Path) -> None:
 
             col1, col2 = st.columns(2)
             configuracao = col1.selectbox("Configuração", list(DESCRICOES), index=3, key="configuracao")
-            cenario = col2.selectbox("Cenário", [f"C{i}" for i in range(9)], key="cenario")
+            cenario = col2.selectbox("Cenário", [c.value for c in Cenario], key="cenario")
             st.caption("O cenário é um rótulo experimental; selecioná-lo não injeta uma falha no backup.")
             col1, col2 = st.columns(2)
             semente = col1.number_input("Semente", min_value=0, value=1, step=1, key="semente")

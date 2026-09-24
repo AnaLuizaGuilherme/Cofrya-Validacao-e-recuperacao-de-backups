@@ -1,0 +1,64 @@
+{
+  "sha256_csv_original": "ccc6c9fef7fb8b6f9a394358afb47930528ae757be57e54645419abb24d40d49",
+  "criterio": "primeira tentativa cronologica com ID compativel; sem selecionar por decisao ou tempo",
+  "chave_deduplicacao": [
+    "cenario",
+    "semente",
+    "configuracao",
+    "id_copia",
+    "versao_codigo",
+    "provedor_ambiente"
+  ],
+  "n_original": 40,
+  "n_retido": 31,
+  "selecao": {
+    "incluida": 31,
+    "repeticao": 7,
+    "identificacao_incompativel": 2
+  },
+  "decisoes": {
+    "aprovada": 16,
+    "reprovada": 15
+  },
+  "sem_registro": [
+    {
+      "cenario": "C7",
+      "configuracao": "C_sem_func"
+    }
+  ],
+  "por_configuracao": {
+    "A": {
+      "aprovada": 8
+    },
+    "B": {
+      "aprovada": 4,
+      "reprovada": 4
+    },
+    "C_sem_func": {
+      "aprovada": 3,
+      "reprovada": 4
+    },
+    "C": {
+      "aprovada": 1,
+      "reprovada": 7
+    }
+  },
+  "deteccao_conjunto_comum_C1_C6": {
+    "A": {
+      "reprovadas": 0,
+      "total": 6
+    },
+    "B": {
+      "reprovadas": 3,
+      "total": 6
+    },
+    "C_sem_func": {
+      "reprovadas": 4,
+      "total": 6
+    },
+    "C": {
+      "reprovadas": 6,
+      "total": 6
+    }
+  }
+}

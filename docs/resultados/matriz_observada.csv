@@ -1,0 +1,9 @@
+cenario,A,B,C_sem_func,C
+C0,aprovada,aprovada,aprovada,aprovada
+C1,aprovada,reprovada,reprovada,reprovada
+C2,aprovada,reprovada,reprovada,reprovada
+C3,aprovada,aprovada,aprovada,reprovada
+C4,aprovada,aprovada,aprovada,reprovada
+C5,aprovada,aprovada,reprovada,reprovada
+C6,aprovada,reprovada,reprovada,reprovada
+C7,aprovada,reprovada,sem_registro,reprovada

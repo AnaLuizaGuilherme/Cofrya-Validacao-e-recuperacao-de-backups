@@ -1,25 +1,15 @@
 """
-Adaptador Neon (seção 5.5 do TCC, adaptado — ver nota de desvio abaixo).
+Adaptador Neon utilizado nos ensaios em nuvem do Cofrya.
 
-Alternativa ao adaptador Docker (docker_adapter.py) para ambientes sem
-Docker disponível, como o Streamlit Community Cloud. Usa a API do Neon
-(https://neon.tech) para criar um branch de banco de dados isolado por
-tentativa — o equivalente, neste contexto, a subir e derrubar um contêiner
-PostgreSQL temporário. O branch é removido ao final da tentativa, do mesmo
-jeito que o contêiner Docker é destruído.
+Cria um branch por tentativa e um banco vazio dentro dele; solicita uma
+conexão direta ao endpoint de escrita e confirma o banco via SQL antes de
+restaurar. Solicita a remoção do branch ao terminar.
 
-Requer duas variáveis de ambiente (ou st.secrets, se rodando no Streamlit):
-  NEON_API_KEY     - chave de API pessoal do Neon (console.neon.tech -> Account -> API keys)
-  NEON_PROJECT_ID  - id do projeto Neon já criado (contém o branch base "main")
-
-NOTA DE DESVIO DA ARQUITETURA DO TCC: a seção 5.5 descreve isolamento via
-contêineres Docker locais, com limites explícitos de CPU/memória e sem
-dependência de rede externa. Usar o Neon troca esse isolamento local por um
-provedor de nuvem terceiro — o modelo de ameaça muda (a rede e o provedor
-passam a fazer parte da superfície de confiança) e os limites de CPU/memória
-deixam de ser configuráveis pelo verificador. Esta via é recomendada apenas
-para demonstração pública hospedada, não como substituição do protocolo
-experimental descrito no TCC.
+Requer NEON_API_KEY e NEON_PROJECT_ID no ambiente ou em st.secrets.
+A rede e o provedor integram o domínio de confiança. Branches herdam o
+estado do pai, inclusive papéis; o banco novo evita herdar tabelas nos
+resultados da restauração. Os limites locais de CPU/memória do adaptador
+Docker não se aplicam ao Neon. Use projeto exclusivo de laboratório.
 """
 
 from __future__ import annotations
@@ -72,10 +62,8 @@ def subir_postgres_temporario(
 ) -> InstanciaTemporaria:
     """Cria um branch efêmero do Neon e retorna seus dados de conexão.
 
-    Levanta ContainerNaoDisponivel nos mesmos casos em que o adaptador
-    Docker levantaria — permitindo reproduzir o cenário C8 (ambiente de
-    restauração impedido de iniciar) também nesta via, por exemplo com
-    NEON_PROJECT_ID inválido.
+    Levanta ContainerNaoDisponivel se o ambiente não puder ser preparado.
+    Esse impedimento não demonstra defeito no backup.
     """
     chave, project_id = _obter_config()
     cabecalhos = _cabecalhos(chave)

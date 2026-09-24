@@ -24,6 +24,7 @@ from .executor import (
     executar_tentativa,
 )
 from .results import RegistradorCSV
+from .scenarios import Cenario
 
 
 def _obter_chave(nome_variavel_env: str) -> bytes:
@@ -104,10 +105,10 @@ def gerar_base(semente, volume, saida, dsn_origem, chave_env, versao_aplicacao):
 @click.option("--chave-env", default="TCC_HMAC_KEY", show_default=True)
 @click.option("--idade-maxima-dias", default=30, show_default=True)
 @click.option("--saida", default="./results", show_default=True)
-@click.option("--cenario", default="C0", show_default=True)
+@click.option("--cenario", default="C0", show_default=True, type=click.Choice([c.value for c in Cenario]))
 @click.option("--semente", type=int, default=None, help="Semente experimental; inferida de seedN no ID quando omitida.")
 @click.option("--dependencias", default="", help="Lista separada por vírgula de papéis a criar antes da restauração (cenário C5)")
-@click.option("--imagem-postgres", default=None, help="Sobrescreve a imagem Docker (use uma inválida para simular C8)")
+@click.option("--imagem-postgres", default=None, help="Sobrescreve a imagem PostgreSQL do ambiente Docker")
 @click.option("--provedor-ambiente", default="docker", type=click.Choice(["docker", "neon"]),
               help="docker (padrão, local) ou neon (nuvem, sem Docker — requer NEON_API_KEY/NEON_PROJECT_ID)")
 def verificar(copia_id, configuracao, repositorio, chave_env, idade_maxima_dias, saida, cenario, semente, dependencias, imagem_postgres, provedor_ambiente):
@@ -172,6 +173,9 @@ def matriz(repositorio, catalogo, configs, chave_env, saida):
         diretorio_trabalho="./tentativas",
         diretorio_saida_csv=saida,
     )
+    # Validar o catálogo completo antes de iniciar qualquer restauração.
+    for item in itens:
+        Cenario(item.get("cenario", "C0"))
     registrador = RegistradorCSV(saida)
 
     for item in itens:
@@ -198,7 +202,6 @@ def matriz(repositorio, catalogo, configs, chave_env, saida):
         )
 
         for config_str in configs:
-            imagem_override = "postgres:versao-inexistente" if cenario == "C8" else None
             registro = executar_tentativa(
                 entrada=entrada,
                 configuracao=Configuracao(config_str),
@@ -207,7 +210,6 @@ def matriz(repositorio, catalogo, configs, chave_env, saida):
                 referencias_esperadas=referencias,
                 cenario=cenario,
                 semente=semente,
-                imagem_postgres_override=imagem_override,
             )
             registrador.gravar(registro)
             click.echo(

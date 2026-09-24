@@ -51,8 +51,7 @@ def subir_postgres_temporario(
     """Sobe um contêiner PostgreSQL isolado e aguarda disponibilidade.
 
     Levanta ContainerNaoDisponivel se o contêiner não ficar pronto dentro do
-    tempo limite — usado para simular/detectar o cenário C8 (ambiente de
-    restauração impedido de iniciar).
+    tempo limite. Falhas de infraestrutura produzem resultado inconclusivo.
     """
     nome_container = f"tcc-pg-{id_tentativa}"
     senha = secrets.token_urlsafe(16)

@@ -2,8 +2,8 @@
 Validadores do banco restaurado (seção 5.4 do TCC).
 
 Três camadas, na ordem em que a configuração C as executa:
-  1. Estrutura  — tabelas e objetos esperados existem.
-  2. Conteúdo   — contagens e identificadores batem com a referência capturada
+  1. Estrutura  — as cinco tabelas esperadas existem.
+  2. Conteúdo   — contagens batem com a referência capturada
                   antes da inserção de qualquer falha.
   3. Negócio    — regras da aplicação (ex.: total do pedido = soma dos itens),
                   com representação decimal e arredondamento explícitos.

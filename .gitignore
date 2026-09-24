@@ -14,3 +14,8 @@ dados/
 tentativas/
 .env
 *.log
+
+# Registros individuais entregues no material suplementar do TCC
+docs/resultados/resumo_original_2026-09-24.csv
+docs/resultados/resumo_sem_repeticoes.csv
+docs/resultados/auditoria_selecao.csv

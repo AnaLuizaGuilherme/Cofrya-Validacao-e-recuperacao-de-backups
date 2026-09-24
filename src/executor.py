@@ -32,13 +32,14 @@ from . import manifest as manifesto_mod
 from .adapters import docker_adapter, neon_adapter, file_adapter, postgres_adapter
 from .results import RegistroTentativa
 from .experiment_inputs import validar_referencias
+from .scenarios import Cenario
 from .validators import (
     validar_estrutura,
     validar_conteudo,
     validar_regras_de_negocio,
 )
 
-VERSAO_CODIGO = "0.2.2"
+VERSAO_CODIGO = "0.2.3"
 
 
 class Configuracao(str, Enum):
@@ -106,9 +107,9 @@ def executar_tentativa(
 ) -> RegistroTentativa:
     """Executa uma tentativa completa e retorna o registro pronto para CSV.
 
-    `imagem_postgres_override` permite reproduzir C8 (impedimento do ambiente
-    de restauração) passando uma imagem Docker inexistente.
+    `imagem_postgres_override` seleciona a imagem do ambiente Docker.
     """
+    Cenario(cenario)  # Recusar rótulos fora do protocolo antes de criar recursos.
     if contexto.provedor_ambiente not in {"docker", "neon"}:
         raise ValueError("Provedor de restauração inválido.")
     seed_no_nome = re.search(r"(?:^|_)seed(\d+)(?:_|$)", entrada.id_copia)
@@ -242,7 +243,7 @@ def executar_tentativa(
         except docker_adapter.ContainerNaoDisponivel as exc:
             registro.duracao_preparacao_s = time.monotonic() - t0
             registro.decisao = Decisao.INCONCLUSIVA.value
-            registro.motivo = f"Ambiente de restauração impedido de iniciar (C8): {exc}"
+            registro.motivo = f"Ambiente de restauração impedido de iniciar: {exc}"
             registro.registrar_evidencia("preparacao_ambiente", False, "disponível", str(exc))
             return registro
 

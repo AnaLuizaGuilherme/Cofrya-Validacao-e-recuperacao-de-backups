@@ -1,120 +1,161 @@
 # Cofrya
 
-Um backup precisa fazer mais do que existir.
+**Um backup precisa fazer mais do que existir.**
 
-Protótipo em Python e Streamlit para verificar integridade, restauração e regras de negócio em backups PostgreSQL. Inclui cadastro/login, histórico por conta e uma ferramenta complementar de leitura de CSV, JSON, SQLite e índices de arquivos `pg_dump`.
+Cofrya é um protótipo acadêmico em Python e Streamlit que verifica backups lógicos PostgreSQL por etapas: existência, autenticação do manifesto, integridade, restauração temporária e validação dos dados recuperados.
 
-## Executar
+- **Aplicação:** [cofrya.streamlit.app](https://cofrya.streamlit.app)
+- **Código:** [AnaLuizaGuilherme/Cofrya-Validacao-e-recuperacao-de-backups](https://github.com/AnaLuizaGuilherme/Cofrya-Validacao-e-recuperacao-de-backups)
+- **TCC:** [texto completo atualizado](docs/TCC_Cofrya.md)
+- **Resultados observados:** [matriz agregada](docs/resultados/matriz_observada.csv), [métricas](docs/resultados/metricas.json) e [critério de seleção](docs/resultados/README.md).
 
-Python 3.10 ou superior; Python 3.12 utilizado nos testes.
+## Produto implementado
+
+Cadastro, login, troca de senha e histórico por conta; upload de `.dump`, manifesto e referências; execução das configurações A, B, C_sem_func e C; exportação dos resumos e evidências em CSV. O módulo complementar protege e verifica CSV, JSON, SQLite e o índice de arquivos PostgreSQL. Para `.dump`, a leitura do índice **não comprova restauração nem correção do conteúdo**.
+
+A interface chama o executor Python diretamente. Na hospedagem pública, o Neon fornece PostgreSQL temporário: um branch por tentativa e um banco novo dentro dele. O banco é confirmado por SQL antes de `pg_restore`, usando conexão direta (`pooled=false`) ao endpoint de escrita. Ao final, o programa solicita a remoção do branch. Docker permanece disponível para execução local.
+
+O Neon não armazena as contas nem o histórico do aplicativo nesta versão. Esses dados ficam no disco do processo Streamlit. Os ensaios relatados usaram Neon; os limites de CPU/memória do adaptador Docker não se aplicam à nuvem.
+
+## Configurações e cenários C0–C7
+
+| Configuração | Significado da aprovação |
+| --- | --- |
+| A | Backup e manifesto existem. |
+| B | A + manifesto autenticado, ID e idade autorizados, tamanho e SHA-256 corretos. |
+| C_sem_func | B + restauração concluída com `pg_restore --exit-on-error`. |
+| C | C_sem_func + presença das cinco tabelas, contagens e regra de totalização dos pedidos. |
+
+A validação C é específica do esquema sintético de pedidos. Não verifica todas as colunas, todos os identificadores ou todas as regras de aplicações arbitrárias. As referências precisam ser confiáveis e anteriores à injeção de falhas; o hash das referências registrado no resumo identifica o arquivo, mas não autentica sua origem.
+
+### Matriz esperada
+
+Condições: arquivos correspondentes ao cenário, chave correta, limite de 30 dias e ambiente disponível. Para C5, o papel `papel_leitura_restrita` deve estar ausente no destino e **não** ser informado no campo de dependências a preparar.
+
+| Cenário | A | B | C_sem_func | C |
+| --- | --- | --- | --- | --- |
+| C0 — cópia válida | Aprova | Aprova | Aprova | Aprova |
+| C1 — truncamento após assinatura | Aprova | Reprova | Reprova | Reprova |
+| C2 — byte alterado após assinatura | Aprova | Reprova | Reprova | Reprova |
+| C3 — tabela pagamentos omitida antes da assinatura | Aprova | Aprova | Aprova | Reprova |
+| C4 — total de pedido incorreto antes da assinatura | Aprova | Aprova | Aprova | Reprova |
+| C5 — papel necessário à restauração ausente | Aprova | Aprova | Reprova | Reprova |
+| C6 — manifesto autêntico com captura antiga | Aprova | Reprova | Reprova | Reprova |
+| C7 — arquivo e manifesto adulterados sem HMAC válido | Aprova | Reprova | Reprova | Reprova |
+
+Selecionar o cenário apenas **rotula** a tentativa; não modifica o backup. O nome `pedidos_seedN_cX.dump` permite preencher o ID, mas não substitui a autenticação do manifesto. A tela confere cenário/semente e exige referências válidas para C antes de restaurar. Problemas de infraestrutura permanecem inconclusivos; não constituem uma classe adicional de falha do backup.
+
+### Resultados observados
+
+A exportação de 23–24/09/2026 (UTC), versão **0.2.2**, contém 40 linhas. Foram preservados 31 ensaios: a primeira tentativa cronológica de cada combinação válida. Sete repetições e dois registros com ID `Oii` foram excluídos da análise, mas permanecem no CSV original entregue à autora como material suplementar do TCC. Os registros detalhados, com UUIDs e horários individuais, não estão publicados neste repositório. A decisão e a duração não participaram do critério de seleção.
+
+Os resultados registrados coincidem com a matriz esperada nas **31 combinações observadas**: 16 aprovações, 15 reprovações e nenhuma inconclusão. **C7/C_sem_func não consta da exportação**; sua rejeição é esperada, mas não foi medida neste conjunto. A cobertura é 31/32 (96,875%).
+
+No conjunto comum C1–C6, A detectou 0/6 falhas; B, 3/6; C_sem_func, 4/6; C, 6/6. C3 e C4 demonstram o ganho funcional: restauraram sem erro e só foram reprovados por C. Essas proporções descrevem uma semente e um volume; não são estimativas de eficácia geral. Tempos de restauração das tentativas que chegaram à etapa: 256,970–335,021 s. Validação funcional em C0/C3/C4: 3,944–3,974 s. CPU, memória e espaço não foram medidos.
+
+Para reproduzir a consolidação (somente biblioteca padrão Python):
+
+Para reproduzir, coloque a exportação original do material suplementar em `docs/resultados/resumo_original_2026-09-24.csv` e execute:
+
+```bash
+python scripts/consolidar_resultados.py
+```
+
+O script gera localmente os registros selecionados e a auditoria detalhada. Esses arquivos ficam fora do versionamento público; a matriz e as métricas agregadas estão disponíveis acima.
+
+A versão **0.2.3** delimita o protocolo a C0–C7, corrige o catálogo negativo de C5 e publica a análise. Os CSVs históricos mantêm a versão original; os testes automatizados não substituem os ensaios no Neon.
+
+## Imagens da aplicação
+
+Capturas fornecidas pela autora, realizadas em 23/09/2026. São ilustrações da interface; as contagens científicas vêm dos CSVs consolidados. Foram selecionadas imagens sem chaves em texto aberto.
+
+### Acesso e cadastro
+
+![Tela de login do Cofrya](docs/imagens/cofrya-login.png)
+
+<details><summary>Cadastro de usuário</summary>
+
+![Tela de cadastro do Cofrya](docs/imagens/cofrya-cadastro.png)
+
+</details>
+
+### Verificação PostgreSQL
+
+![Upload de dump, manifesto e referências para C4](docs/imagens/cofrya-verificacao-postgresql.png)
+
+### Restauração bem-sucedida com reprovação funcional
+
+![C4 na configuração C: integridade e restauração aprovadas, regra de negócio reprovada](docs/imagens/cofrya-falha-funcional-c4.png)
+
+### Proteção e leitura de arquivos
+
+![Geração de manifesto com chave mascarada](docs/imagens/cofrya-proteger-arquivo.png)
+
+![Índice PostgreSQL legível, com aviso de que os dados não foram restaurados](docs/imagens/cofrya-leitura-indice.png)
+
+## Instalação e publicação
+
+Python 3.10 ou superior; suíte validada em Python 3.12.
 
 ```bash
 python -m pip install -r requirements.txt
 python -m streamlit run streamlit_app.py
 ```
 
-`streamlit_app.py` e `cofrya_app.py` abrem a mesma aplicação com login. Os três caminhos antigos dentro de `verificador_backups/` continuam funcionando. A implementação canônica fica na raiz; `verificador_backups/src/__init__.py` apenas redireciona imports legados para `src/`.
-
-| Arquivo/pasta | Responsabilidade |
-| --- | --- |
-| `cofrya_app.py` | Cadastro, login, troca de senha e navegação |
-| `postgres_app.py` | Interface PostgreSQL, upload, histórico e exportação |
-| `arquivos_app.py` | Manifestos e verificação de arquivos genéricos |
-| `src/executor.py` | Etapas, decisões, métricas e limpeza |
-| `src/manifest.py` | HMAC-SHA-256 e SHA-256 do backup |
-| `src/validators.py` | Estrutura, contagens e totalização de pedidos |
-| `src/adapters/` | Arquivos, PostgreSQL, Docker e Neon |
-| `src/results.py` | CSVs de resumo e evidências |
-| `src/auth.py` | Contas SQLite, senhas com PBKDF2 e limite de tentativas |
-| `src/safe_files.py` | Validação de destinos e limites dos uploads |
-
-## Publicar no Streamlit Community Cloud
-
-1. Selecione este repositório e a branch `main`.
-2. Use **`streamlit_app.py`** como arquivo principal. Se o app já estiver apontando para um dos caminhos em `verificador_backups/`, o redirecionamento é mantido.
-3. Em Settings → Secrets, configure os valores reais, sem publicá-los no GitHub:
+No Streamlit Community Cloud, selecione este repositório, branch `main` e arquivo `streamlit_app.py`. Em **Settings → Secrets**, informe os valores reais fora do código:
 
 ```toml
-TCC_HMAC_KEY = "chave usada para assinar os backups do laboratório"
-NEON_API_KEY = "chave da API Neon"
-NEON_PROJECT_ID = "id-do-projeto-neon"
+TCC_HMAC_KEY = "sua-chave-do-laboratorio"
+NEON_API_KEY = "sua-chave-da-api-neon"
+NEON_PROJECT_ID = "seu-projeto-neon"
 ```
 
-4. Crie sua conta na página inicial. A e B não usam Neon. C e C_sem_func exigem `pg_restore` e um ambiente de restauração.
-5. Para Neon, use um **projeto exclusivo do laboratório**, com o papel `neondb_owner`. O app seleciona Neon inicialmente quando suas duas configurações estão disponíveis. `packages.txt` instala `postgresql-client`; a versão de `pg_restore` deve ser compatível com a versão que gerou o dump. Um dump de versão mais recente pode exigir um cliente mais recente.
+Use projeto Neon exclusivo para o laboratório e papel `neondb_owner`. O cliente `pg_restore` instalado por `packages.txt` precisa ser compatível com o dump. A e B dispensam o banco temporário. C e C_sem_func exigem os clientes PostgreSQL e o provedor configurado. Não é necessário manter o computador da autora ligado para o aplicativo hospedado executar.
 
-O modo Neon cria um branch por tentativa e um banco novo dentro dele, evitando restaurar sobre tabelas herdadas do banco pai. Ao terminar, solicita a remoção do branch. Falhas de remoção são registradas e precisam ser verificadas no console Neon. A criação e remoção usam a [API oficial de branches](https://api-docs.neon.tech/reference/createprojectbranch) e a [API de bancos](https://api-docs.neon.tech/reference/createprojectbranchdatabase).
+Um branch Neon herda o estado do pai, inclusive papéis. O Cofrya cria um **banco novo** para impedir que tabelas herdadas sejam confundidas com dados restaurados. Para C5, confira também a ausência do papel no branch pai. Falhas na remoção devem ser verificadas no console. Não há garantia de isolamento físico de CPU/memória nem ambiente adequado para SQL hostil.
 
-A partir da versão `0.2.1`, o adaptador solicita explicitamente uma [conexão direta](https://api-docs.neon.tech/reference/getconnectionuri) (`pooled=false`) ao endpoint de escrita do branch criado. Confere o destino e espera uma consulta SQL confirmar o nome do banco temporário antes de chamar `pg_restore`. O estado `active` do endpoint, isoladamente, não é usado como prova de que o banco recém-criado já aceita conexões. A espera SQL usa o prazo de disponibilidade configurado, além da espera inicial pelo endpoint.
+## Contas, segurança e limites
 
-Erros de conexão, como `database ... does not exist` durante a abertura da conexão pelo `pg_restore`, deixam a tentativa **inconclusiva**; não demonstram defeito no backup. Erros de leitura do dump ou de execução de seu SQL continuam resultando em reprovação. Não há repetição automática de restaurações parciais. Tentativas antigas são preservadas: após uma atualização, execute uma nova tentativa e confira a coluna `versao_codigo` no resumo.
+- Contas em SQLite local; senhas derivadas por PBKDF2-HMAC-SHA-256, salt aleatório e comparação em tempo constante. Oito falhas de login bloqueiam novas tentativas da conta dentro de uma janela de 10 minutos.
+- Pastas por usuário, limites de upload e limpeza da sessão ao sair. Execução sequencial por processo; não há fila distribuída nem recuperação automática de trabalhos interrompidos.
+- O Community Cloud não garante persistência do disco local. Baixe resultados e arquivos importantes. `COFRYA_DATA_DIR` permite escolher um volume persistente em hospedagens que o ofereçam.
+- Os resultados contêm UUID, motivo, versão, início UTC, provedor, hash das referências e durações. O tempo total inclui limpeza. Campos `NA` não significam zero.
+- Execute apenas dumps sintéticos confiáveis. O manifesto não criptografa dados nem demonstra que a origem estava correta. Segredos não devem ser versionados.
 
-Neon é uma alternativa de demonstração em nuvem. Não equivale ao ambiente Docker do protocolo experimental: rede, provedor, versão do servidor e recursos são diferentes. Não misture os tempos dos dois ambientes na mesma comparação sem controlar essas diferenças.
+A ferramenta complementar, sem manifesto, informa apenas leitura/estrutura. Com manifesto autenticado, confere também integridade. No caso de `.dump`, usa `pg_restore --list`; para restauração real, use a aba **Backups PostgreSQL**.
 
-## Contas e persistência
+## Organização e linha de comando
 
-Cada usuário possui `dados/usuarios/<usuario>/repositorio`, `results` e arquivos temporários próprios. Sair limpa os dados da sessão, inclusive o último resultado e chaves mostradas na interface. O login bloqueia uma conta por até 10 minutos após oito tentativas incorretas na janela.
-
-Contas e arquivos são locais ao servidor. **No Community Cloud, reinícios/reimplantações podem apagar esses dados.** Baixe os CSVs; para persistência garantida, hospede em volume persistente ou implemente armazenamento externo. `COFRYA_DATA_DIR` permite indicar um volume persistente onde o host oferecer essa opção. Não versionar `dados/`, `.env` nem `.streamlit/secrets.toml`.
-
-Os resultados antigos em `results/` são preservados como evidência histórica. Não são atribuídos automaticamente a novas contas. Não foram produzidos novos resultados científicos por esta correção.
-
-## Configurações do experimento
-
-| Configuração | O que uma aprovação significa |
+| Componente | Responsabilidade |
 | --- | --- |
-| A | Backup e manifesto existem; não autentica nem restaura |
-| B | Manifesto autenticado; identificador, idade, tamanho e hash conferem |
-| C_sem_func | B e restauração concluída com `pg_restore --exit-on-error` |
-| C | C_sem_func e validações de estrutura, contagens e regra de totalização |
-
-Selecionar C0–C8 apenas rotula uma tentativa. As falhas devem ser preparadas separadamente. A interface não injeta falhas ao selecionar um cenário. C8 por imagem inexistente aplica-se somente a Docker; para Neon, uma indisponibilidade precisa ser controlada no próprio provedor.
-
-No upload, a opção **Usar o nome do backup como ID da cópia** vem marcada. Assim, `pedidos_seed1_c3.dump` usa o ID `pedidos_seed1_c3`, mesmo depois de um teste C0. O nome só identifica a cópia solicitada: o manifesto continua sendo autenticado e seu ID precisa coincidir. Para informar um ID manualmente, desmarque a opção. Arquivos já presentes no servidor usam o campo de ID manual.
-
-Para a convenção `pedidos_seedN_cX`, a tela exige cenário e semente compatíveis com o nome antes de iniciar a tentativa. Isso evita registrar arquivos de C0 sob o rótulo C3. A configuração C também exige referências JSON válidas antes da restauração. A ausência delas não cria um banco temporário. O resultado mostra o ID, cenário e semente efetivamente utilizados.
-
-| Cenário | ID dos arquivos com semente 1 | A | B | C | C_sem_func |
-| --- | --- | --- | --- | --- | --- |
-| C0 — backup válido | `pedidos_seed1_c0` | aprovada | aprovada | aprovada | aprovada |
-| C1 — arquivo truncado após assinatura | `pedidos_seed1_c1` | aprovada | reprovada | reprovada | reprovada |
-| C2 — byte alterado após assinatura | `pedidos_seed1_c2` | aprovada | reprovada | reprovada | reprovada |
-| C3 — tabela omitida antes da assinatura | `pedidos_seed1_c3` | aprovada | aprovada | reprovada | aprovada |
-| C4 — total incorreto antes da assinatura | `pedidos_seed1_c4` | aprovada | aprovada | reprovada | aprovada |
-
-Esta é a matriz **esperada**, condicionada aos arquivos corretos e ao ambiente disponível. C1/C2 devem falhar na integridade; C3/C4 na configuração C devem alcançar a validação funcional. Uma reprovação por ID divergente não demonstra a detecção dessas falhas. Confira decisão **e motivo** em `resumo.csv` e a etapa em `evidencias.csv`. Use sempre dump, manifesto e referências da mesma pasta de cenário. Resultados antigos são preservados; erros de entrada exigem novas tentativas.
-
-A chave HMAC e as referências esperadas pertencem ao domínio confiável. As referências devem ser capturadas **antes** da injeção de falhas e preservadas pelo pesquisador. O hash das referências registrado no CSV permite identificar a entrada utilizada, mas **não autentica a origem das referências**. O upload é destinado ao laboratório controlado: receber referências de um adversário não estabelece uma referência confiável. Uma aprovação C também não certifica todas as regras de uma aplicação arbitrária; os validadores atuais usam o esquema sintético de pedidos.
-
-Arquivos genéricos têm escopo separado: sem manifesto, verifica-se leitura/estrutura, sem atestar integridade em relação ao original. `pg_restore --list` avalia o índice, não restaura os dados. A ferramenta distingue resultado reprovado de inconclusivo quando um requisito não está disponível.
-
-## Linha de comando
+| `streamlit_app.py`, `cofrya_app.py` | Entrada, autenticação e navegação |
+| `postgres_app.py`, `arquivos_app.py` | Verificação PostgreSQL e arquivos genéricos |
+| `src/executor.py`, `src/results.py` | Etapas, decisões, métricas e CSVs |
+| `src/manifest.py`, `src/validators.py` | Autenticação, integridade e validação funcional |
+| `src/adapters/` | PostgreSQL, Neon, Docker e arquivos |
+| `src/auth.py`, `src/safe_files.py` | Contas e validação dos caminhos/uploads |
+| `scripts/consolidar_resultados.py` | Seleção auditável da amostra do TCC |
+| `verificador_backups/` | Redirecionamentos para entradas antigas |
 
 ```bash
-# Defina TCC_HMAC_KEY no ambiente, fora do repositório de backups.
-# Use exclusivamente um banco de origem de laboratório.
+# Defina TCC_HMAC_KEY no ambiente e use somente um banco de origem de laboratório.
 python -m src.cli gerar-base --semente 1 --volume 1000 --saida ./repositorio --dsn-origem "postgresql://..."
-python -m src.cli verificar --copia-id pedidos_seed1_c0 --config C --repositorio ./repositorio --cenario C0 --semente 1 --saida ./results
-python -m src.cli matriz --repositorio ./repositorio --catalogo ./config/catalog.json --configs A --configs B --configs C_sem_func --configs C --saida ./results
+python -m src.cli verificar --copia-id pedidos_seed1_c0 --config C --repositorio ./repositorio --cenario C0 --semente 1 --provedor-ambiente neon --saida ./results
+# A matriz CLI utiliza o adaptador Docker por padrão.
+python -m src.cli matriz --repositorio ./repositorio --catalogo ./config/catalog.example.json --configs A --configs B --configs C_sem_func --configs C --saida ./results
 ```
 
-Sem `--dsn-origem`, o gerador cria SQL e um **placeholder**, não um backup restaurável. Use um `pg_dump` real nos ensaios C/C_sem_func. O catálogo da matriz é preparado pelo pesquisador; sementes e cenários vêm desse arquivo. As configurações são opções repetidas. Semente omitida em uma tentativa pode ser inferida de `seedN` no identificador; divergências são recusadas.
+Sem `--dsn-origem`, o gerador produz SQL e um **placeholder**, que não é backup restaurável. Gere os cenários separadamente antes de executar a matriz. O catálogo negativo de C5 deixa `dependencias` vazio; informar o papel ausente transforma o ensaio em um controle com a dependência atendida.
 
-O executor local requer Docker, `pg_restore`, `psql` quando há dependências declaradas e um cliente compatível com o servidor. O Docker publica a porta somente em `127.0.0.1`. Execute dumps de laboratório confiáveis: restauração de SQL não constitui uma sandbox de execução de código hostil.
-
-## Resultados e métricas
-
-`resumo.csv` e `evidencias.csv` são ligados por `id_tentativa`. Novos registros incluem versão `0.2.2`, instante UTC, provedor e hash das referências. Preparação inclui inicialização do ambiente e dependências. O tempo total inclui limpeza. CPU, memória e espaço permanecem `NA` enquanto não houver instrumentação; não são zeros nem medições.
-
-Registros anteriores à correção não devem fundamentar a decomposição de tempos: a inicialização não era somada à preparação. O exemplo legado também possui semente declarada `0` e ID `seed1`; reconcilie com os arquivos de origem ou repita o ensaio. O programa **não altera essa evidência retroativamente**. Ao acrescentar registros a CSVs legados compatíveis, apenas estende o cabeçalho; metadados antigos desconhecidos ficam `NA`. Escrita CSV é sequencial por processo; use uma instância por pasta de resultados.
-
-## Testes
+## Verificação do código
 
 ```bash
 python -m pip install -r requirements-dev.txt
 python -m pytest -q tests
 ```
 
-A suíte verifica gerador, manifesto, isolamento de uploads, autenticação, troca de contas, metadados, temporização, falhas de infraestrutura, limpeza e o fluxo B real pela interface Streamlit. Docker/Neon e o relógio são substituídos nos testes específicos do executor. Esses testes não são execuções da matriz experimental nem certificam uma restauração real na hospedagem.
+80 testes passaram na revisão 0.2.3. A suíte cobre manifesto, uploads, login, cenários, decisões, falhas de conexão, limpeza, seleção dos dados e fluxo de interface. Os testes de infraestrutura usam substitutos controlados; não são novas restaurações na nuvem. GitHub Actions executa a suíte em pushes para `main` e pull requests.
 
-O workflow `Testes Cofrya` executa a suíte em pushes para `main` e pull requests. A integração Codacy descrita nas instruções do repositório não estava disponível durante esta correção; para ativá-la, reconecte/reinicie seu servidor MCP e confira Settings → Copilot → Enable MCP servers no GitHub, ou contate o suporte Codacy.
+## Documentação técnica
+
+[Neon: branches](https://neon.com/docs/introduction/branching) · [API de branches](https://api-docs.neon.tech/reference/createprojectbranch) · [Conexão Neon](https://api-docs.neon.tech/reference/getconnectionuri) · [PostgreSQL: pg_restore](https://www.postgresql.org/docs/17/app-pgrestore.html) · [Streamlit: segredos](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management) · [Streamlit: persistência](https://docs.streamlit.io/develop/concepts/connections/connecting-to-data).

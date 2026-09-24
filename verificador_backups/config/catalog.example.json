@@ -1,11 +1,50 @@
 [
-  {"id_copia": "pedidos_seed1_c0", "cenario": "C0", "semente": 1, "dependencias": []},
-  {"id_copia": "pedidos_seed1_c1", "cenario": "C1", "semente": 1, "dependencias": []},
-  {"id_copia": "pedidos_seed1_c2", "cenario": "C2", "semente": 1, "dependencias": []},
-  {"id_copia": "pedidos_seed1_c3", "cenario": "C3", "semente": 1, "dependencias": []},
-  {"id_copia": "pedidos_seed1_c4", "cenario": "C4", "semente": 1, "dependencias": []},
-  {"id_copia": "pedidos_seed1_c5", "cenario": "C5", "semente": 1, "dependencias": ["papel_leitura_restrita"]},
-  {"id_copia": "pedidos_seed1_c6", "cenario": "C6", "semente": 1, "dependencias": []},
-  {"id_copia": "pedidos_seed1_c7", "cenario": "C7", "semente": 1, "dependencias": []},
-  {"id_copia": "pedidos_seed1_c8", "cenario": "C8", "semente": 1, "dependencias": []}
+  {
+    "id_copia": "pedidos_seed1_c0",
+    "cenario": "C0",
+    "semente": 1,
+    "dependencias": []
+  },
+  {
+    "id_copia": "pedidos_seed1_c1",
+    "cenario": "C1",
+    "semente": 1,
+    "dependencias": []
+  },
+  {
+    "id_copia": "pedidos_seed1_c2",
+    "cenario": "C2",
+    "semente": 1,
+    "dependencias": []
+  },
+  {
+    "id_copia": "pedidos_seed1_c3",
+    "cenario": "C3",
+    "semente": 1,
+    "dependencias": []
+  },
+  {
+    "id_copia": "pedidos_seed1_c4",
+    "cenario": "C4",
+    "semente": 1,
+    "dependencias": []
+  },
+  {
+    "id_copia": "pedidos_seed1_c5",
+    "cenario": "C5",
+    "semente": 1,
+    "dependencias": []
+  },
+  {
+    "id_copia": "pedidos_seed1_c6",
+    "cenario": "C6",
+    "semente": 1,
+    "dependencias": []
+  },
+  {
+    "id_copia": "pedidos_seed1_c7",
+    "cenario": "C7",
+    "semente": 1,
+    "dependencias": []
+  }
 ]

@@ -1,5 +1,5 @@
 """
-Cenários de falha C0 a C8 (seção 4.4, Quadro 3 do TCC).
+Cenários de falha C0 a C7 do protocolo experimental.
 
 Cada função de injeção documenta a alteração principal e retorna metadados
 sobre o que foi alterado, para permitir atribuir os efeitos observados na
@@ -30,7 +30,6 @@ class Cenario(str, Enum):
     C5 = "C5"  # papel ou permissão requerida indisponível
     C6 = "C6"  # cópia antiga ou diferente da autorizada
     C7 = "C7"  # arquivo e manifesto adulterados sem chave válida
-    C8 = "C8"  # ambiente de restauração impedido de iniciar
 
 
 DESCRICAO_CENARIO = {
@@ -42,7 +41,6 @@ DESCRICAO_CENARIO = {
     Cenario.C5: "Papel ou permissão requerida indisponível",
     Cenario.C6: "Cópia antiga ou diferente da autorizada",
     Cenario.C7: "Arquivo e manifesto adulterados sem chave válida",
-    Cenario.C8: "Ambiente de restauração impedido de iniciar",
 }
 
 EVIDENCIA_ESPERADA = {
@@ -54,7 +52,6 @@ EVIDENCIA_ESPERADA = {
     Cenario.C5: "Falha da dependência declarada de recuperação",
     Cenario.C6: "Violação de idade máxima ou identificador",
     Cenario.C7: "Rejeição da autenticação",
-    Cenario.C8: "Inconclusivo nas configurações que dependem da restauração",
 }
 
 
@@ -173,15 +170,4 @@ def adulterar_manifesto_sem_chave(caminho_manifesto: str) -> ResultadoInjecao:
         cenario=Cenario.C7,
         alteracao_aplicada="sha256 e hmac substituídos sem a chave correta",
         metadados={},
-    )
-
-
-def impedir_ambiente_restauracao() -> ResultadoInjecao:
-    """C8: simula impedimento do laboratório (ex.: imagem Docker inexistente
-    ou indisponibilidade de recursos). A aplicação prática é passar uma
-    imagem inválida ao adaptador Docker para esta tentativa."""
-    return ResultadoInjecao(
-        cenario=Cenario.C8,
-        alteracao_aplicada="Ambiente de restauração configurado para falhar ao iniciar",
-        metadados={"imagem_invalida": "postgres:versao-inexistente-para-teste"},
     )

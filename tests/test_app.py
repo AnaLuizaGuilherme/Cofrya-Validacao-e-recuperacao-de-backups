@@ -76,7 +76,7 @@ def test_fluxo_b_real_pela_interface_grava_resultado_uma_vez(contas,monkeypatch)
     assert not app.error
     registro,salvo=app.session_state['ultima_tentativa']
     assert salvo and registro.decisao=='aprovada'
-    assert registro.semente==1 and registro.versao_codigo=='0.2.2'
+    assert registro.semente==1 and registro.versao_codigo=='0.2.3'
     app.run()
     with (contas.pasta_do_usuario('alice')/'results/resumo.csv').open() as f: linhas=list(csv.DictReader(f))
     assert len(linhas)==1
