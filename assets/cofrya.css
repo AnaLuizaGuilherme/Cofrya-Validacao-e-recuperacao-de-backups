@@ -1,0 +1,57 @@
+<style>
+:root{--cf-navy:#13253f;--cf-blue:#2e66c5;--cf-muted:#586b83;--cf-line:#dce4ef;--cf-bg:#f5f7fb}
+.stApp{background:var(--cf-bg);color:var(--cf-navy)}
+[data-testid="stHeader"]{background:rgba(245,247,251,.94)}
+.block-container{max-width:1190px;padding-top:2.8rem;padding-bottom:3rem}
+h1,h2,h3{letter-spacing:-.035em;color:var(--cf-navy)}
+h1{font-size:2.45rem!important;font-weight:750!important;line-height:1.13!important;padding-bottom:.5rem!important}
+h2{font-size:1.45rem!important}h3{font-size:1.12rem!important}
+p,label,.stCaption{line-height:1.6}
+.cf-eyebrow{font-size:.72rem;font-weight:750;letter-spacing:.15em;color:var(--cf-blue);margin:1rem 0 .5rem}
+.cf-lead{color:var(--cf-muted);max-width:780px;margin:0 0 1.7rem;font-size:1rem}
+.cf-brand{display:flex;align-items:center;gap:.2rem;margin-bottom:1rem;color:var(--cf-navy);font-size:2rem;font-weight:850;letter-spacing:-.07em}
+.cf-brand img{height:57px;width:57px;object-fit:contain}.cf-brand-dot{color:var(--cf-blue)}
+[data-testid="stSidebar"]{background:#fff;border-right:1px solid var(--cf-line)}
+[data-testid="stSidebar"] .block-container{padding:1.4rem}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{gap:.65rem}
+.st-key-navegacao [role="radiogroup"]{gap:.45rem}
+.st-key-navegacao [data-baseweb="radio"]{padding:.8rem .9rem;border:1px solid transparent;border-radius:10px;margin:0;width:100%}
+.st-key-navegacao [data-baseweb="radio"]:has(input:checked){background:#eaf1ff;border-color:#d1dfff;color:#224f9a}
+.st-key-navegacao [data-baseweb="radio"]>div:first-child{position:absolute;opacity:0;width:0;margin:0}
+.st-key-navegacao [data-baseweb="radio"]:focus-within{outline:3px solid #77a6ef;outline-offset:2px}
+.st-key-navegacao [data-baseweb="radio"] p{font-weight:600;font-size:.94rem}
+.cf-sidebar-label{color:var(--cf-muted);font-size:.68rem;letter-spacing:.14em;font-weight:700;margin:1.2rem 0 .45rem}
+.cf-sidebar-note{font-size:.8rem;line-height:1.6;color:var(--cf-muted);border-top:1px solid var(--cf-line);padding-top:1rem;margin-top:2rem}
+.cf-user{font-size:.84rem;color:var(--cf-muted);padding:.5rem 0}
+.cf-user strong{color:var(--cf-navy)}
+[data-testid="stVerticalBlockBorderWrapper"]>div{border-color:var(--cf-line)!important;border-radius:15px!important}
+.st-key-etapa-nivel,.st-key-etapa-arquivos,.st-key-etapa-revisao,.st-key-login-card,.st-key-conta-card{background:#fff;border:1px solid var(--cf-line);border-radius:16px;padding:1.6rem!important;margin-bottom:1.1rem}
+.cf-step{display:flex;gap:.8rem;align-items:flex-start;margin-bottom:1rem}
+.cf-step-number{display:grid;place-items:center;min-width:32px;height:32px;background:#edf3ff;border-radius:50%;font-size:.8rem;font-weight:750;color:var(--cf-blue)}
+.cf-step h3{padding:0!important;margin:0!important;line-height:1.55!important}.cf-step p{margin:.2rem 0 0;color:var(--cf-muted);font-size:.85rem}
+.cf-scope{border-left:3px solid var(--cf-blue);background:#f3f7ff;padding:.8rem 1rem;margin:.35rem 0}
+.cf-scope>span{font-size:.64rem;font-weight:750;letter-spacing:.1em;color:#2855a1}.cf-scope p{font-size:.9rem;margin:.2rem 0 0;color:#324b6e}
+[data-testid="stFileUploaderDropzone"]{border:1px dashed #9db6d9;border-radius:12px;background:#f8faff;padding:1.3rem .8rem;min-height:145px}
+[data-testid="stFileUploaderDropzone"] small{color:#586b83}
+button[kind="primary"],button[data-testid="stBaseButton-primaryFormSubmit"]{border-radius:9px;background:var(--cf-blue);border-color:var(--cf-blue);font-weight:650;min-height:44px;padding:.55rem 1.1rem}
+button[kind="secondary"],button[data-testid="stBaseButton-secondary"]{border-radius:9px;border-color:#cbd7e5;min-height:42px}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid #77a6ef!important;outline-offset:3px!important}
+[data-baseweb="input"],[data-baseweb="select"]>div{border-radius:9px;min-height:44px}
+[data-testid="stExpander"]{border-color:var(--cf-line);background:#fff;border-radius:10px}
+[data-testid="stMetric"]{background:#fff;border-top:3px solid #d4e2f7;border-radius:10px;padding:1.1rem 1.2rem;border-bottom:1px solid var(--cf-line)}
+[data-testid="stMetricValue"]{color:var(--cf-navy);font-size:2rem}
+.cf-result{display:flex;gap:1rem;border-radius:14px;padding:1.35rem 1.5rem;margin:1.2rem 0;border:1px solid}
+.cf-result h2{margin:0;padding:0!important;font-size:1.35rem!important;color:inherit}.cf-result p{margin:.35rem 0 0;font-size:.94rem}
+.cf-result-sign{font-size:1.4rem;font-weight:700;min-width:26px;line-height:1.4}
+.cf-result-success{background:#ebf7f0;border-color:#bbddca;color:#176445}.cf-result-error{background:#fff0ef;border-color:#e8c1bd;color:#963c34}.cf-result-warning{background:#fff8e9;border-color:#e8d7ae;color:#795a19}
+.cf-empty{text-align:center;padding:3.5rem 1.5rem;background:white;border:1px solid var(--cf-line);border-radius:15px}
+.cf-empty-mark{font-size:2rem;color:var(--cf-blue)}.cf-empty h3{margin:.5rem 0!important;padding:0!important}.cf-empty p{color:var(--cf-muted);max-width:530px;margin:auto;font-size:.95rem}
+.cf-login-hero{padding:2rem 1.6rem 2rem 0;max-width:540px}.cf-login-hero h1{font-size:3.15rem!important;line-height:1.08!important;letter-spacing:-.055em}.cf-login-hero h1 span{color:var(--cf-blue)}
+.cf-login-hero>p{color:var(--cf-muted);font-size:1.05rem;margin:1.2rem 0 2rem;max-width:450px}
+.cf-login-point{display:flex;gap:1rem;margin:1.25rem 0;align-items:flex-start}.cf-login-point>b{font-size:.8rem;color:var(--cf-blue);padding-top:.15rem}.cf-login-point strong{display:block;font-size:.95rem}.cf-login-point p{font-size:.86rem;color:var(--cf-muted);margin:.2rem 0 0}
+.st-key-login-card{padding:2rem!important;margin-top:2.1rem;box-shadow:0 15px 45px #182f5010}.st-key-login-card [data-testid="stForm"]{border:none;padding:.5rem 0}
+.cf-login-footer{border-top:1px solid var(--cf-line);padding-top:1.1rem;margin-top:1.5rem;color:var(--cf-muted);font-size:.78rem}
+[data-testid="stTabs"] [role="tab"]{font-weight:600}.st-key-login-card [role="tablist"]{margin-bottom:1rem}
+@media(max-width:760px){.block-container{padding:1.5rem 1rem 2rem}.cf-login-hero{padding:.5rem 0}.cf-login-hero h1{font-size:2.15rem!important}.cf-login-point{display:none}.cf-login-hero>p{margin:.8rem 0 0}.st-key-login-card{margin-top:0!important;padding:1.25rem!important}h1{font-size:1.9rem!important}.cf-lead{font-size:.93rem;margin-bottom:1rem}.st-key-etapa-nivel,.st-key-etapa-arquivos,.st-key-etapa-revisao{padding:1.1rem!important}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>

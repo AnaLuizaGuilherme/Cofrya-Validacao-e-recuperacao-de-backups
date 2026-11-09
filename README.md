@@ -6,6 +6,14 @@ Verificador de backups lógicos PostgreSQL em **Python**, com interface **Stream
 
 [Aplicação](https://cofrya.streamlit.app) · [Guia técnico](docs/TCC_Cofrya.md) · [Resultados experimentais](docs/resultados/README.md) · [Código](https://github.com/AnaLuizaGuilherme/Cofrya-Validacao-e-recuperacao-de-backups)
 
+## Interface e experiência de uso
+
+A navegação é organizada por tarefa: **Verificar backup**, **Histórico**, **Proteger arquivo**, **Verificar arquivo** e **Minha conta**. A verificação PostgreSQL apresenta três etapas: escolher o nível, adicionar os arquivos e revisar a execução. O escopo de A, B, C_sem_func e C fica visível junto da seleção e do resultado; cenário e semente continuam disponíveis no contexto experimental.
+
+O histórico apresenta colunas resumidas, filtros e evidências sob demanda. A exportação mantém todas as colunas técnicas e todas as tentativas; a interface não aplica o critério de consolidação do artigo. A identidade visual usa o símbolo fornecido pela autora, com tema em azul e superfícies claras. Os componentes de apresentação estão em `src/ui.py`, `assets/cofrya.css` e `.streamlit/config.toml` (Streamlit 1.45+).
+
+Esta revisão da interface não altera o executor, as regras de decisão nem os resultados experimentais históricos. A melhoria de usabilidade ainda precisa de avaliação com participantes; os testes automatizados verificam funcionamento, não demonstram ganho de UX.
+
 ## Executar localmente
 
 ```bash
