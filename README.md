@@ -8,6 +8,10 @@ Verificador de backups lógicos PostgreSQL em **Python**, com interface **Stream
 
 ## Interface e experiência de uso
 
+![Tela de entrada do Cofrya com identidade visual azul e formulário compacto](docs/imagens/cofrya-interface-2026-11-09.png)
+
+*Interface publicada em 09/11/2026. Revisão validada por 82 testes automatizados, com CI aprovada no GitHub; a captura registra a tela pública de entrada.*
+
 A navegação é organizada por tarefa: **Verificar backup**, **Histórico**, **Proteger arquivo**, **Verificar arquivo** e **Minha conta**. A verificação PostgreSQL apresenta três etapas: escolher o nível, adicionar os arquivos e revisar a execução. O escopo de A, B, C_sem_func e C fica visível junto da seleção e do resultado; cenário e semente continuam disponíveis no contexto experimental.
 
 O histórico apresenta colunas resumidas, filtros e evidências sob demanda. A exportação mantém todas as colunas técnicas e todas as tentativas; a interface não aplica o critério de consolidação do artigo. A identidade visual usa o símbolo fornecido pela autora, com tema em azul e superfícies claras. Os componentes de apresentação estão em `src/ui.py`, `assets/cofrya.css` e `.streamlit/config.toml` (Streamlit 1.45+).
@@ -91,7 +95,7 @@ Sem `--dsn-origem`, `gerar-base` produz SQL e um placeholder, **não um dump res
 
 [Baixar Cofrya_Cenarios_C0_C7.zip](tests/fixtures/Cofrya_Cenarios_C0_C7.zip?raw=true)
 
-Um único ZIP com **24 arquivos de entrada** (dump, manifesto e referências por cenário), instruções para o Streamlit, matriz esperada das **32 combinações** entre C0–C7 e A/B/C_sem_func/C, proveniência e inventário SHA-256. Extraia o arquivo e envie os três arquivos da mesma pasta em **Backups PostgreSQL**. Use semente 1, idade máxima de 30 dias e a chave de laboratório configurada fora do repositório.
+Um único ZIP com **24 arquivos de entrada** (dump, manifesto e referências por cenário), instruções para o Streamlit, matriz esperada das **32 combinações** entre C0–C7 e A/B/C_sem_func/C, proveniência e inventário SHA-256. Extraia o arquivo e envie os três arquivos da mesma pasta em **Verificar backup**. Use semente 1, idade máxima de 30 dias e a chave de laboratório configurada fora do repositório.
 
 Os artefatos são os pacotes históricos de 23–24/09/2026, preservados sem alteração. Após 30 dias, a idade pode mudar o resultado dos cenários que deveriam passar nessa etapa. C5 exige que `papel_leitura_restrita` esteja ausente no destino. Consulte o `README.md` interno antes dos ensaios.
 
