@@ -80,3 +80,34 @@ def test_fluxo_b_real_pela_interface_grava_resultado_uma_vez(contas,monkeypatch)
     app.run()
     with (contas.pasta_do_usuario('alice')/'results/resumo.csv').open() as f: linhas=list(csv.DictReader(f))
     assert len(linhas)==1
+
+
+def test_navegacao_por_tarefa_e_historico_vazio(contas):
+    app=AppTest.from_file(str(RAIZ/'streamlit_app.py'))
+    app.session_state['usuario_logado']='alice'
+    app.run()
+    assert not app.exception
+    assert app.title[0].value=='Verificar um backup'
+    for pagina,titulo in [('Histórico','Histórico de verificações'),
+                          ('Proteger arquivo','Proteger um arquivo'),
+                          ('Verificar arquivo','Verificar um arquivo'),
+                          ('Minha conta','Minha conta')]:
+        app.radio(key='navegacao').set_value(pagina).run()
+        assert not app.exception
+        assert app.title[0].value==titulo
+    assert not (contas.pasta_do_usuario('alice')/'results/resumo.csv').exists()
+
+
+def test_nivel_controla_referencias_e_impede_execucao_sem_arquivos(contas):
+    app=AppTest.from_file(str(RAIZ/'streamlit_app.py'))
+    app.session_state['usuario_logado']='alice'
+    app.run()
+    assert any('Referências' in x.label for x in app.get('file_uploader'))
+    for nivel in ['A','B','C_sem_func']:
+        app.selectbox(key='configuracao').set_value(nivel).run()
+        assert not any('Referências' in x.label for x in app.get('file_uploader'))
+    clicar(app,'Executar verificação')
+    assert not app.exception
+    assert app.error
+    assert 'ultima_tentativa' not in app.session_state
+    assert not (contas.pasta_do_usuario('alice')/'results/resumo.csv').exists()

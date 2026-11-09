@@ -13,6 +13,7 @@ manifesto de volta.
 from __future__ import annotations
 
 import io
+import hashlib
 import secrets
 import tempfile
 import json
@@ -23,6 +24,7 @@ import streamlit as st
 
 from src import manifest as manifesto_mod
 from src import tipos_arquivo as ta
+from src import ui
 
 RAIZ = Path(__file__).resolve().parent
 
@@ -65,18 +67,17 @@ def salvar_temp(pasta: Path, nome: str, conteudo: bytes) -> str:
 
 
 def pagina_proteger(pasta_base: Path):
-    st.header("Proteger um arquivo")
-    st.write(
-        "Envie um arquivo (CSV, JSON, SQLite ou backup PostgreSQL) para gerar um "
-        "**manifesto assinado** — um arquivo pequeno com o hash e uma assinatura "
-        "(HMAC) que provam, mais tarde, se o arquivo original mudou."
-    )
+    ui.cabecalho("ARQUIVOS DE DADOS", "Proteger um arquivo", "Gere um manifesto para conferir, depois, se os bytes do arquivo continuam iguais.")
+    ui.etapa("01", "Escolha o arquivo", "CSV, JSON, SQLite ou backup PostgreSQL.")
 
     arquivo = st.file_uploader(
         "Arquivo a proteger", type=["csv", "json", "db", "sqlite", "sqlite3", "dump", "backup"],
         key="proteger_arquivo",
     )
     if not arquivo:
+        st.session_state.pop("manifesto_gerado", None)
+        st.session_state.pop("manifesto_origem", None)
+        st.info("Guarde o arquivo original, o manifesto e a chave. Você precisará deles para conferir a integridade mais tarde.")
         return
 
     extensao = extensao_de(arquivo.name)
@@ -85,11 +86,16 @@ def pagina_proteger(pasta_base: Path):
         return
     st.caption(f"Tipo detectado: **{NOMES_TIPO[extensao]}**")
 
+    ui.etapa("02", "Defina a chave", "O Cofrya pode gerar uma chave ou usar a que você já possui.")
     usar_chave_propria = st.checkbox("Já tenho uma chave secreta para usar (em vez de gerar uma nova)")
     chave_texto = ""
     if usar_chave_propria:
         chave_texto = st.text_input("Cole sua chave secreta", type="password", key="chave_propria")
 
+    origem = (arquivo.name, hashlib.sha256(arquivo.getvalue()).hexdigest(),
+              usar_chave_propria, hashlib.sha256(chave_texto.encode()).hexdigest())
+    if st.session_state.get("manifesto_origem") != origem:
+        st.session_state.pop("manifesto_gerado", None)
     if st.button("Gerar manifesto", type="primary"):
         if usar_chave_propria and not chave_texto.strip():
             st.error("Cole a chave ou desmarque a opção para gerar uma nova.")
@@ -112,12 +118,13 @@ def pagina_proteger(pasta_base: Path):
                 Path(arquivo.name).name + ".manifest.json",
                 chave_texto_final if not usar_chave_propria else None,
             )
+            st.session_state["manifesto_origem"] = origem
         except (OSError, ValueError) as exc:
             st.error(f"Não foi possível gerar o manifesto: {exc}")
             return
     if "manifesto_gerado" in st.session_state:
         conteudo, nome, chave_nova = st.session_state["manifesto_gerado"]
-        st.success(f"Manifesto gerado: {nome}")
+        ui.resultado("aprovada", "Manifesto pronto para baixar", nome)
         if chave_nova:
             st.warning("Guarde a chave em local separado do arquivo e do manifesto. Ela será apagada desta sessão ao sair.")
             st.code(chave_nova, language=None)
@@ -127,8 +134,9 @@ def pagina_proteger(pasta_base: Path):
 
 
 def pagina_verificar(pasta_base: Path):
-    st.header("Verificar um arquivo")
-    st.write("Envie o arquivo, o manifesto gerado antes e a chave para conferir se está tudo certo.")
+    ui.cabecalho("ARQUIVOS DE DADOS", "Verificar um arquivo", "Confira a leitura do arquivo e, com um manifesto, verifique sua autenticidade e integridade.")
+    st.caption("Para backups .dump, esta ferramenta lê apenas o índice. Use Verificar backup para testar a restauração.")
+    ui.etapa("01", "Adicione o arquivo e seu manifesto", "Sem manifesto, a comparação de integridade com o original não será realizada.")
 
     col1, col2 = st.columns(2)
     arquivo = col1.file_uploader(
@@ -137,9 +145,11 @@ def pagina_verificar(pasta_base: Path):
     )
     manifesto = col2.file_uploader("Manifesto (.manifest.json) — opcional", type=["json"], key="verificar_manifesto")
 
-    chave_texto = st.text_input(
-        "Chave secreta (necessária só se enviar um manifesto)", type="password", key="verificar_chave"
-    )
+    chave_texto = ""
+    if manifesto:
+        chave_texto = st.text_input(
+            "Chave que assinou o manifesto", type="password", key="verificar_chave"
+        )
 
     extensao = extensao_de(arquivo.name) if arquivo else None
     if arquivo and extensao is None:
@@ -198,7 +208,7 @@ def pagina_verificar(pasta_base: Path):
              "observado": e.valor_observado, "detalhe": e.detalhe}
             for e in resultado.evidencias
         ]
-        st.dataframe(pd.DataFrame(linhas).astype(str), use_container_width=True, hide_index=True)
+        ui.detalhe_evidencias(linhas)
 
 
 def main():
